@@ -1,5 +1,5 @@
 ---
-tags: [moc, websers, company]
+tags: [moc, websers, company, in-house-products]
 ---
 
 # 🗺 Websers — Map of Content
@@ -24,6 +24,15 @@ tags: [moc, websers, company]
 | Client | Platform | Status |
 |---|---|---|
 | [[Clients/Printly/Printly MOC\|Printly]] | Odoo + WordPress | Active |
+
+---
+
+## 📦 In House Products
+
+→ [[In House Products/In House Products MOC|All In House Products]]
+
+| Product | Description | Status |
+|---|---|---|
 
 ---
 

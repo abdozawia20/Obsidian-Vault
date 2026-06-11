@@ -28,8 +28,14 @@
 Thumbs.db
 Desktop.ini
 
+# ── Antigravity / AI agent skills (project-scoped, installed via npx) ─────────
+# These are installed from sickn33/antigravity-awesome-skills and should not
+# be committed — reinstall with: npx antigravity-awesome-skills --path .agents/skills
+.agents/
+
 # ── Large binary/media files (keep in 40_Resources but don't bloat the repo) ─
 # Uncomment if needed:
 # *.mp4
 # *.mp3
 # Journal/06 Templates/Images/**
+.agents

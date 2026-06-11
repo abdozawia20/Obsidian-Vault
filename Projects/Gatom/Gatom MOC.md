@@ -1,5 +1,5 @@
 ---
-tags: [moc, gatom, erp-agency, sales]
+tags: [moc, gatom, erp-agency, sales, in-house-products]
 ---
 
 # 🗺 Gatom — Map of Content
@@ -16,11 +16,29 @@ tags: [moc, gatom, erp-agency, sales]
 
 ---
 
+## ⚖️ Legal
+
+| Document | Purpose |
+|---|---|
+| [[Legal/Legal Documents Design\|Legal Documents Design]] | NDA, License Agreement & Privacy Policy — validated design (multi-agent brainstorm) |
+
+---
+
 ## 👥 Clients
 
 | Client | Project | Status |
 |---|---|---|
 | [[Clients/Golden-GM/Golden-GM MOC\|Golden-GM]] | Odoo → ERPNext v16 migration | Active |
+
+---
+
+## 📦 In House Products
+
+→ [[In House Products/In House Products MOC|All In House Products]]
+
+| Product | Description | Status |
+|---|---|---|
+| [[In House Products/Asset Rental/Asset Rental MOC\|Asset Rental]] | Flat & vehicle rental platform (2 variants) | 🟡 In Development |
 
 ---
 

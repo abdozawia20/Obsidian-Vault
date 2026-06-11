@@ -14,3 +14,4 @@ Thumbs.db
 
 // Syncthing internal version store — no need to sync to other peers
 .stversions/
+.agents
