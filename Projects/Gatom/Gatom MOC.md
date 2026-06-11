@@ -29,6 +29,7 @@ tags: [moc, gatom, erp-agency, sales, in-house-products]
 | Client | Project | Status |
 |---|---|---|
 | [[Clients/Golden-GM/Golden-GM MOC\|Golden-GM]] | Odoo → ERPNext v16 migration | Active |
+| [[Clients/Al-Andalus Park/Al-Andalus Park MOC\|Al-Andalus Park]] | Park management — ticketing, exclusive areas, accommodation & retail | Active |
 
 ---
 

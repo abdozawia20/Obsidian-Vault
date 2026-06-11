@@ -9,7 +9,9 @@
 
 ## 1. Overview
 
-System-level configuration, user roles, license enforcement, and multi-region settings. This domain is the **foundation** — every other domain reads from `Rental Configuration`. Also includes the full app scaffold, directory layout, hooks.py, design system, and Flutter project setup.
+This is the **very first domain** to implement — it creates the `rental_core` Frappe app, sets up the directory structure, registers all hooks and scheduler events, and establishes the global configuration singleton (`Rental Configuration`). Every other domain in the base module (D02–D08) and every child app (Flats, Vehicles) depends on the infrastructure created here.
+
+The domain also includes the **license enforcement** system (preventing usage after license expiry), the **role hierarchy** (who can do what), the **design system** (CSS variables and components for the web portal), and the **Flutter project scaffold** (Dart project, Riverpod setup, shared models).
 
 ---
 
@@ -18,6 +20,8 @@ System-level configuration, user roles, license enforcement, and multi-region se
 ### 2.1 Create the App
 
 > **Requires**: Nothing — first task in the project.
+
+The `rental_core` app is the **base Frappe application** that all rental platform functionality lives in. This is the very first thing to do — creating the app scaffold using Frappe's `bench new-app` command, then installing it on the development site. Until this is done, no DocTypes, APIs, or web pages can be created.
 
 ```bash
 bench new-app rental_core
@@ -35,6 +39,10 @@ bench --site rental.localhost install-app rental_core
 ### 2.2 Directory Structure
 
 > **Requires**: 2.1
+
+This establishes the **physical file layout** of the entire application. Rather than dumping everything into generic `utils/` or `helpers/` folders, the codebase uses **domain-specific directories**: `billing/`, `payment_routing/`, `notification_pipeline/`, `licensing/`, `catalog/`, and `gateways/`. This makes it immediately obvious where code for a specific feature lives.
+
+The directory also includes the `api/` layer (one file per resource), `templates/` for email HTML, and `doctype/` for all Frappe DocType definitions. Every file is created as a stub initially — actual logic is added in later domains.
 
 > [!NOTE]
 > All modules use **domain-specific names** — no generic `utils/`, `helpers/`, or `shared/` directories.
@@ -117,6 +125,10 @@ rental_core/
 
 > **Requires**: 2.2 (all referenced modules must exist as stubs)
 
+Frappe's `hooks.py` is the **central wiring file** for the entire application. It registers: **7 daily scheduler events** (payment reminders, renewal checks, late fees, quotation expiry, booking expiry, deposit auto-commit, overdue escalation), **1 cron job** (booking expiry check every 5 minutes for time-sensitive expirations), **2 monthly jobs** (reporting and webhook log cleanup), **3 doc_events** (hooks on Subscription, Sales Invoice, and Payment Entry for the billing pipeline), **5 portal menu items** (customer and guarantor sidebar links), and **2 website route rules** (clean URLs for asset detail and booking pages).
+
+This subtask creates the file with all registrations pointing to stub modules. The actual logic is implemented in subsequent domains.
+
 ```python
 app_name = "rental_core"
 required_apps = ["frappe", "erpnext"]
@@ -178,6 +190,8 @@ website_route_rules = [
 
 > **Requires**: 2.3 (hooks.py must define `doc_events` structure)
 
+This is an **architectural constraint**, not a feature to build. The base app (`rental_core`) must **never import** from child apps (`rental_flats`, `rental_vehicles`). Instead, child apps extend the base by registering their own `doc_events` in their `hooks.py`. This means `rental_core` works perfectly standalone — installing or uninstalling a child app doesn't break anything. This pattern is critical for the multi-variant business model where different customers may have only Flats, only Vehicles, or both.
+
 > [!IMPORTANT]
 > `rental_core` has **zero imports** from child apps (`rental_flats`, `rental_vehicles`). All extension points use Frappe's native `doc_events` hook system.
 
@@ -211,6 +225,10 @@ doc_events = {
 ### 3.1 Full Schema
 
 > **Requires**: 2.2 (DocType directory `rental_configuration/` must exist)
+
+`Rental Configuration` is a **Frappe singleton** — a single-record DocType that acts as the global settings page for the entire platform. It stores everything from country/currency selection and payment gateway credentials, to billing parameters (grace periods, late fee rules), KYC requirements, AWS/CDN settings for media, notification preferences, and license keys. Every domain in the system reads from this singleton.
+
+The schema is intentionally large because it centralizes all operator-configurable values in one place, avoiding scattered settings across multiple pages. **Password fields** (API keys, secrets) are restricted to the Administrator role only.
 
 | Field | Type | Default | Source |
 |---|---|---|---|
@@ -276,6 +294,10 @@ doc_events = {
 
 > **Requires**: 3.1 (reads `license_key`, `license_grace_period_days` from Rental Configuration)
 
+The platform is a **licensed product** — operators need a valid license key to use it. This validator runs on every user login (`on_session_creation` hook) and checks whether the license is still valid. If the license has expired but is within the grace period (default 7 days), the system continues working but flags itself as being in grace mode. After the grace period, all users are **redirected to a `/suspended` page** and cannot access any functionality.
+
+The validator also performs periodic remote validation (at most once per 24 hours) against a license server, with offline tolerance of 7 days for environments without reliable internet.
+
 ```python
 def validate_license(login_manager=None):
     lic = frappe.get_single("Rental Configuration")
@@ -304,6 +326,8 @@ def validate_license(login_manager=None):
 
 > **Requires**: 4.1 (`is_in_grace_mode()` function must exist)
 
+Payment webhooks arrive from Stripe/Tap/PayMob even when the license is expired. During grace mode, the system **must not lose these webhooks** but also cannot fully process them (since billing logic may be degraded). This subtask logs the incoming webhook payload with `processed=0` and returns a benign `{"status": "ok"}` response so the payment gateway doesn't retry endlessly. Once the license is renewed, the reconciliation job (4.3) picks up these deferred webhooks.
+
 In `payment_routing/webhook_handler.py`, at the top of `payment_webhook()`:
 ```python
 if is_in_grace_mode():
@@ -322,6 +346,8 @@ if is_in_grace_mode():
 ### 4.3 Post-Renewal Reconciliation Job
 
 > **Requires**: 4.2 (grace mode must have created unprocessed webhook logs to reconcile)
+
+After the operator renews the license and the platform exits grace mode, all the webhook payloads that were stored during the grace period need to be **re-processed**. This job finds all `Payment Webhook Log` entries with `processed=0` and enqueues each one for background processing. This ensures no payment confirmations are lost during the license gap — the billing state catches up automatically.
 
 ```python
 def reconcile_grace_period_webhooks():
@@ -346,6 +372,8 @@ def reconcile_grace_period_webhooks():
 ### 4.4 Suspended Portal Template
 
 > **Requires**: 3.1 (reads `business_contact_email`, `business_contact_phone` from config)
+
+When the license expires past the grace period, every page in the platform (portal and Desk) redirects to this static page. It shows a "Service Suspended" message with the operator's contact information so users know who to reach. The page must work even when most of the system is degraded — it's essentially a static fallback.
 
 New file `www/suspended.html`:
 ```html
@@ -376,6 +404,8 @@ New file `www/suspended.html`:
 
 > **Requires**: 2.2 (`setup.py` stub must exist)
 
+The platform uses **four custom roles** to control access across all DocTypes. `Rental Manager` has full control, `Rental Agent` can handle leads and quotations but has limited agreement access, `Accountant (Rental)` can manage financial records but not operational ones, and `Customer` has read-only access to their own data. These roles are created during app setup and must survive `bench migrate` without being deleted.
+
 **Acceptance Criteria**:
 - [ ] `setup_roles()` creates four custom roles: `Rental Manager`, `Rental Agent`, `Accountant (Rental)`, `Customer`
 - [ ] Roles persist across `bench migrate` — they are not deleted on re-run
@@ -386,6 +416,8 @@ New file `www/suspended.html`:
 ### 5.2 Permission Rules
 
 > **Requires**: 5.1 (roles must exist), 3.1 (Rental Configuration DocType must exist)
+
+This matrix defines **who can do what** across every DocType in the system. The key security principle is **customer isolation**: customers can only see their own agreements, deposits, and KYC submissions. Accountants are deliberately blocked from leads and quotations (separation of concerns). The Customer role gets special `R (portal)` access on Rental Asset — meaning they can read assets through the web portal's filtered views, not through Frappe Desk.
 
 | DocType | System Manager | Rental Manager | Rental Agent | Accountant | Customer |
 |---|---|---|---|---|---|
@@ -418,6 +450,8 @@ New file `www/suspended.html`:
 
 > **Requires**: 2.2 (API stub files in `api/` must exist)
 
+All API endpoints must return errors in a **consistent format** that the Flutter app and web portal can reliably parse. Instead of raw Python tracebacks, every error returns a structured JSON body with the error type, per-field validation messages, and server messages. This is a **contract** that all developers must follow when writing API endpoints — the Flutter `ApiError` model (8.10) is built to parse this exact structure.
+
 **HTTP Status Codes**: `200` Success · `400` Validation · `401` Unauthenticated · `403` Forbidden · `404` Not Found · `409` Conflict · `429` Rate Limited
 
 **Error Response Body**:
@@ -447,6 +481,8 @@ New file `www/suspended.html`:
 
 > **Requires**: 6.1
 
+Every API endpoint that returns a list of records (assets, agreements, invoices, readings) must follow this pagination structure. The response includes `total` count, current `page`, `page_size`, and a `has_next` boolean. This lets the Flutter app show "Load More" buttons and the web portal show page numbers. `page_size` is capped at 100 to prevent a single request from dumping the entire database.
+
 **Pagination Response** (all list endpoints):
 ```json
 {
@@ -472,6 +508,8 @@ New file `www/suspended.html`:
 ### 7.1 CSS Design System (`rental_web.css`)
 
 > **Requires**: 2.2 (`public/css/` directory must exist)
+
+The **design system** defines all visual constants (colors, typography, spacing, shadows, radii) as CSS custom properties. Every web portal page uses these variables instead of hardcoded values, ensuring visual consistency and making it easy to re-theme for different clients. The system uses a modern neutral palette with `Inter` as the primary font. The `.rental-card:hover` rule adds a subtle lift animation that makes the catalog feel interactive.
 
 ```css
 :root {
@@ -503,6 +541,8 @@ New file `www/suspended.html`:
 
 > **Requires**: 7.1 (base stylesheet must exist)
 
+The platform supports **right-to-left languages** (Arabic, Farsi, Urdu, Hebrew). This conditional stylesheet overrides layout-direction-sensitive rules: booking step indicators reverse their flow, catalog filter sidebars flip to the left side, and text alignment adjusts. The stylesheet is **only loaded** when the user's language is RTL — LTR users never download it.
+
 ```css
 [dir="rtl"] .booking-steps      { flex-direction: row-reverse; }
 [dir="rtl"] .catalog-filters    { border-right: none; border-left: 1px solid var(--rental-border); }
@@ -526,6 +566,8 @@ Conditional load:
 ### 7.3 Web File Structure (Stubs)
 
 > **Requires**: 2.2 (`www/`, `templates/`, `public/` directories must exist)
+
+This creates all the web portal page files as **stubs** — each `.html` file has an empty template block, and each `.py` file has a `get_context()` that returns `{}`. The actual page logic is built in later domains (D02 builds the catalog, D05 builds booking, etc.). Creating stubs now ensures all `hooks.py` route rules resolve without 404s, and the portal menu links don't break during development.
 
 ```
 rental_core/
@@ -568,6 +610,8 @@ rental_core/
 
 > **Requires**: 7.3 (portal routes must exist)
 
+The `robots.txt` file tells search engines which pages they can crawl. The **public catalog** (`/rentals/`) is allowed for SEO visibility, but all authenticated portal pages (My Rentals, My Invoices, My Documents, My KYC, Guarantor Portal, Pay) and Frappe Desk (`/app/`) are disallowed to prevent indexing of private user data.
+
 ```
 User-agent: *
 Allow: /rentals/
@@ -593,6 +637,8 @@ Sitemap: https://CLIENT_DOMAIN/sitemap.xml
 
 > **Requires**: 7.3 (all portal pages must exist for security checks)
 
+These are **cross-cutting security rules** that every web developer must follow. All AJAX calls must use `frappe.call()` (which auto-includes the CSRF token), every portal page must redirect guests to `/login`, every database query must filter by the current user's session, and all user inputs must be sanitized against SQL injection. These are not single-feature subtasks — they're constraints that must be verified across every page.
+
 | Requirement | Implementation |
 |---|---|
 | **CSRF protection** | All AJAX calls MUST use `frappe.call()` (auto-includes `X-Frappe-CSRF-Token`). |
@@ -616,6 +662,8 @@ Sitemap: https://CLIENT_DOMAIN/sitemap.xml
 
 > **Requires**: Nothing (Flutter work starts independently from Frappe)
 
+The Flutter mobile app is a **separate project** from the Frappe backend. It communicates with the backend exclusively through the API layer (D01-6.x). This subtask creates the Flutter project scaffold targeting both Android and iOS. The app will serve as the customer-facing mobile experience for browsing assets, booking, managing agreements, and making payments.
+
 ```bash
 flutter create --org com.yourorg --platforms android,ios rental_app
 cd rental_app
@@ -632,6 +680,8 @@ cd rental_app
 ### 8.2 `pubspec.yaml` — Key Dependencies
 
 > **Requires**: 8.1
+
+The app uses a curated set of dependencies: **Dio** for HTTP requests, **GoRouter** for declarative routing, **Flutter Riverpod** for state management, **flutter_secure_storage** for credential persistence, **Firebase** for push notifications, **Freezed** for immutable data models, **fl_chart** for utility usage charts, and **connectivity_plus** for offline detection. All versions are pinned to avoid breaking changes.
 
 ```yaml
 dependencies:
@@ -673,6 +723,8 @@ dev_dependencies:
 
 > **Requires**: 8.2
 
+The Dart codebase is organized into four top-level directories: `app/` (configuration, theming, routing), `core/` (shared API client, data models, formatting utilities), `features/` (one folder per user-facing feature: auth, catalog, booking, etc.), and `widgets/` (reusable UI components like buttons, cards, badges). Every file starts as a stub with a valid Dart class or widget — actual logic is added in later domains.
+
 ```
 lib/
 ├── main.dart
@@ -693,6 +745,8 @@ lib/
 ### 8.4 Per-Client Build Config (`app/config.dart`)
 
 > **Requires**: 8.3
+
+The platform is a **white-label product** — each client gets a custom-branded app. Instead of forking the codebase per client, all client-specific values (API URL, brand color, app name, logo, which asset types to show) are injected at build time via `--dart-define` flags. The same source code produces apps for "ClientOne Rentals" (blue, flats only) and "ClientTwo Mobility" (green, vehicles only) just by changing build parameters.
 
 ```dart
 class AppConfig {
@@ -727,6 +781,8 @@ flutter build apk \
 
 > **Requires**: 8.2 (`flutter_secure_storage` dependency must be resolved)
 
+User credentials (API key + secret) are stored in the device's **encrypted keychain** (iOS Keychain / Android EncryptedSharedPreferences). This provider exposes `FlutterSecureStorage` as a Riverpod provider so it can be easily overridden in tests with a mock implementation. The storage is the **only place** credentials live on the device — they're never written to plain SharedPreferences or logged.
+
 ```dart
 @riverpod
 FlutterSecureStorage secureStorage(Ref ref) {
@@ -749,6 +805,8 @@ FlutterSecureStorage secureStorage(Ref ref) {
 ### 8.6 FrappeClient — Dio Provider
 
 > **Requires**: 8.5 (reads API key/secret from secure storage), 8.4 (`AppConfig.baseUrl`)
+
+The **FrappeClient** is the app's HTTP layer — every API call goes through it. It wraps Dio with two important behaviors: (1) an **auth interceptor** that reads the API key from secure storage and adds the `Authorization: token key:secret` header to every request, and (2) an **error interceptor** that detects HTTP 401 responses and triggers a global logout (the token might have been revoked server-side). All `get()` and `post()` methods route through Frappe's `/api/method/` convention.
 
 ```dart
 @riverpod
@@ -813,6 +871,8 @@ class FrappeClient {
 
 > **Requires**: 8.6
 
+The app must **only communicate over HTTPS** — setting `BASE_URL` to `http://` should cause an assertion error in debug mode. For production builds, certificate pinning is recommended to prevent man-in-the-middle attacks (documented as a post-MVP hardening step). The long-term plan is to migrate from API key authentication to OAuth2 with refresh tokens, but API keys are sufficient for the initial release.
+
 > [!IMPORTANT]
 > - App must **only connect over HTTPS**.
 > - Consider **certificate pinning** using `dio_http2_adapter` for production builds.
@@ -827,6 +887,8 @@ class FrappeClient {
 ### 8.8 Auth Notifier
 
 > **Requires**: 8.6 (FrappeClient for login API call), 8.5 (SecureStorage for credential persistence)
+
+The **AuthNotifier** is the central authentication state manager for the app. On app startup, it checks secure storage for an existing API key — if found, the user is `authenticated`; otherwise, `unauthenticated`. The `login()` method calls Frappe's login API, stores the returned credentials, registers the device's FCM token for push notifications, and transitions to `authenticated`. The `logout()` method reverses everything: deregisters FCM, calls the server-side logout endpoint, clears all stored credentials, and transitions to `unauthenticated`.
 
 ```dart
 enum AuthState { authenticated, unauthenticated, loading }
@@ -882,6 +944,8 @@ class AuthNotifier extends _$AuthNotifier {
 
 > **Requires**: 8.8 (auth state drives redirect logic), 8.3 (all screen stubs must exist)
 
+The app uses **GoRouter** for declarative, URL-based navigation. The key feature is the `redirect` guard: certain routes (booking, my-rentals, invoices, payments, documents, KYC) require authentication. If an unauthenticated user tries to access them, they're redirected to `/login?from=...` and returned to the original page after successful login. Public routes (catalog, asset detail) are accessible without login.
+
 ```dart
 final router = GoRouter(
   redirect: (context, state) async {
@@ -908,6 +972,8 @@ final router = GoRouter(
 ### 8.10 API Error Model
 
 > **Requires**: 6.1 (error envelope structure), 8.6 (FrappeClient)
+
+The Dart counterpart to the server-side error envelope (6.1). This Freezed model parses HTTP error responses into typed objects that the UI layer can display meaningfully. `displayMessage` provides a single string for SnackBars and dialogs, while the full `errors` list gives per-field validation messages for form-level error highlighting. The model handles edge cases like null `exc_type` and empty `_server_messages` without crashing.
 
 ```dart
 @freezed
@@ -938,6 +1004,8 @@ class ApiError with _$ApiError {
 ### 8.11 Offline Caching Strategy
 
 > **Requires**: 8.6 (all caching wraps FrappeClient calls), 8.2 (`connectivity_plus` dependency)
+
+The app must remain **usable when offline** for read-heavy screens. The strategy varies by data type: the asset catalog uses `keepAlive` with stale-while-revalidate (show cached data immediately, refresh in background), asset details are cached per ID and refreshed on pull, agreements are cached but invalidated on screen focus, and invoices are always fetched fresh (financial data must never be stale). The most critical offline behavior is the **booking outbox**: if a user submits a booking while offline, it's serialized to local storage and automatically retried when connectivity returns.
 
 | Data | Strategy |
 |---|---|

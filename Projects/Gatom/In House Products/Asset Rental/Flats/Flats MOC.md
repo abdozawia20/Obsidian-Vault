@@ -61,11 +61,16 @@ tags: [moc, asset-rental, flats]
 
 ---
 
-## 📦 Technical Docs (Original — Pending Review)
+## 📊 Effort Summary
 
-- [[flat-frappe-technical|⚙️ Frappe Technical]]
-- [[flat-web-technical|🌐 Web Technical]]
-- [[flat-flutter-technical|📱 Flutter Technical]]
+| # | Domain | Frappe | Web | Flutter | Total |
+|---|---|---|---|---|---|
+| F01 | Property & Unit Registry | 3d | 2d | 3d | **8d** |
+| F02 | Utility Billing | 3d | 1.5d | 2.5d | **7d** |
+| F03 | Appliance Management | 1d | 0.5d | 1d | **2.5d** |
+| F04 | Insurance | 2d | — | — | **2d** |
+| F05 | Flat Inspection | 2.5d | 0.5d | 0.5d | **3.5d** |
+| | **Total** | **11.5d** | **4.5d** | **7d** | **23d** |
 
 ---
 

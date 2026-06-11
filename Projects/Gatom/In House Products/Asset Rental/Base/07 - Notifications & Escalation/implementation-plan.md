@@ -10,7 +10,9 @@
 
 ## 1. Overview
 
-Unified notification pipeline: reminder scheduler, escalation engine, multi-channel dispatch (email, push, WhatsApp), notification log, and Flutter notification center.
+This domain is the **communication backbone** of the platform. Every notification in the system — payment reminders, KYC updates, escalation warnings, booking confirmations — flows through a unified pipeline. The system supports three channels: **email** (via Frappe's built-in SMTP), **push notifications** (via Firebase Cloud Messaging), and **WhatsApp** (via Twilio or similar provider). 
+
+The domain also includes the **escalation engine**: a tiered system that progressively increases notification severity for overdue payments, starting with email/push at 15 days, adding WhatsApp at 30 days, contacting the guarantor at 45 days, and escalating to legal at 60 days.
 
 ---
 
@@ -19,6 +21,8 @@ Unified notification pipeline: reminder scheduler, escalation engine, multi-chan
 ### 2.1 Schema Definition
 
 > **Requires**: D01-2.2 (DocType directory), D01-5.2 (role permissions)
+
+The **Rental Notification Log** is the audit trail for every notification sent by the system. Every notification — whether it succeeded, partially failed, or completely failed — creates a log entry. This serves three purposes: (1) customer-facing notification center (the customer can browse their notifications in the web portal or Flutter app), (2) staff debugging ("did the customer get notified?"), and (3) compliance audit ("can we prove we sent the 90-day renewal notice?"). Logs are immutable — no one can edit or delete them.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -50,6 +54,8 @@ Unified notification pipeline: reminder scheduler, escalation engine, multi-chan
 ### 3.1 `send_payment_reminders` Scheduler Job
 
 > **Requires**: D01-2.3 (hooks.py), D01-3.1 (`renewal_alert_days`), ERPNext Sales Invoice
+
+A **daily scheduler job** that identifies invoices due in 3 days and sends the customer a reminder via email + push. This is a proactive nudge — reminding tenants before the due date reduces late payments and the need for escalation. The scheduler includes an **idempotency check** to prevent duplicate reminders if the job runs multiple times on the same day.
 
 ```python
 def send_payment_reminders():
@@ -83,6 +89,8 @@ def send_payment_reminders():
 ### 3.2 `check_contract_renewals` Scheduler Job
 
 > **Requires**: D01-3.1 (`renewal_alert_days` = "90,60,30"), D05-2.1 (Rental Agreement with `end_date`)
+
+Sends **renewal alerts** at configurable intervals before a fixed-term contract expires (default: 90, 60, and 30 days). This gives both the tenant and the operator time to discuss renewal terms. Open-ended agreements (no `end_date`) are excluded — they don't expire, so renewal alerts don't apply. Each alert day fires once per agreement (not repeated daily).
 
 ```python
 def check_contract_renewals():
@@ -122,6 +130,15 @@ def check_contract_renewals():
 
 > **Requires**: D01-2.3 (hooks.py), ERPNext Sales Invoice, D05-2.1 (Rental Agreement)
 
+The **escalation engine** implements a 4-tier escalation ladder for overdue payments. This is the business's progressive response to non-payment:
+
+- **Tier 1 (15 days)**: Email + push to customer — a firm reminder.
+- **Tier 2 (30 days)**: Email + push + WhatsApp — adding urgency.
+- **Tier 3 (45 days)**: Email + push + WhatsApp to **both customer and guarantor** — involving the financial backer.
+- **Tier 4 (60 days)**: Email to legal team + automatic `Legal Case` creation — pre-litigation.
+
+Each tier fires **once per invoice** (idempotent). WhatsApp is only used when enabled in config.
+
 ```python
 def run_overdue_escalation():
     TIERS = [
@@ -153,6 +170,8 @@ def run_overdue_escalation():
 
 > **Requires**: D01-2.2 (app scaffold), D01-5.2 (role permissions)
 
+When the 60-day escalation tier fires, a **Legal Case** record is automatically created. This is a lightweight DocType that captures the customer, agreement, total outstanding amount, and a status tracker. It's designed to be the handoff point to the legal team or external legal counsel. The Legal Case is **invisible to the customer** — only Rental Managers and System Managers can view it.
+
 | Field | Type | Notes |
 |---|---|---|
 | `agreement` | Link → Rental Agreement | |
@@ -175,6 +194,10 @@ def run_overdue_escalation():
 ### 5.1 `send_notification` Utility Function
 
 > **Requires**: 2.1 (Notification Log schema), D01-3.1 (config for gateway selection)
+
+The **central dispatch function** that all notification-sending code in the platform calls. It accepts a notification type, customer, reference document, subject, body, and a list of channels. It then attempts delivery on each channel sequentially, catching errors per-channel. The delivery status is determined by the results: all succeed = `Sent`, some fail = `Partial`, all fail = `Failed`. WhatsApp being disabled is NOT counted as a failure.
+
+Critically, this function **never throws exceptions** — notification failures are logged but do not block the calling business logic (e.g., a KYC review shouldn't fail because the email server is down).
 
 ```python
 def send_notification(notification_type, customer, reference_doctype, reference_name,
@@ -232,6 +255,8 @@ def send_notification(notification_type, customer, reference_doctype, reference_
 
 > **Requires**: 5.1, Frappe email setup
 
+The email channel uses Frappe's built-in `frappe.sendmail()` function, which respects the site's configured outgoing email account (SMTP settings). Emails use a branded HTML template (`rental_reminder.html`) for a professional appearance. SMTP failures are caught and returned as error strings (not thrown).
+
 **Acceptance Criteria**:
 - [ ] Uses Frappe's `frappe.sendmail()` — respects outgoing email account settings
 - [ ] Subject and body are passed correctly
@@ -243,6 +268,8 @@ def send_notification(notification_type, customer, reference_doctype, reference_
 ### 5.3 FCM Push Channel (`gateways/fcm.py`)
 
 > **Requires**: 5.1, D01-8.8 (FCM token registered on login)
+
+The push notification channel uses **Firebase Cloud Messaging (FCM)** to deliver real-time notifications to the customer's mobile device. Tokens are registered when the customer logs in to the Flutter app (D01-8.8). A customer can have **multiple tokens** (multiple devices), and push notifications are sent to all of them. Invalid tokens (e.g., app uninstalled) cause errors that are logged but don't block delivery to other devices.
 
 ```python
 def send_fcm_push(customer, title, body):
@@ -268,6 +295,8 @@ def send_fcm_push(customer, title, body):
 
 > **Requires**: 5.1, D01-3.1 (`whatsapp_provider`, `whatsapp_api_key`)
 
+The WhatsApp channel is an **optional escalation-only channel**. It's enabled/disabled via config (`whatsapp_enabled`). When enabled, it sends messages through a WhatsApp Business API provider (e.g., Twilio). The customer's phone number is read from the ERPNext Customer DocType. Missing phone numbers and API failures are logged but don't throw exceptions.
+
 **Acceptance Criteria**:
 - [ ] When `whatsapp_enabled = 0` → channel silently skipped
 - [ ] When `whatsapp_enabled = 1` + `whatsapp_provider = Twilio` → Twilio API called
@@ -283,6 +312,8 @@ def send_fcm_push(customer, title, body):
 
 > **Requires**: 2.1 (Notification Log schema)
 
+Returns the current customer's **notification inbox**: a paginated list of all notifications sent to them, sorted newest-first. The response includes an `unread_count` field at the top level for badge display (web bell icon and Flutter bottom nav badge). Each entry includes the notification type, subject, body, timestamp, and read status.
+
 **Acceptance Criteria**:
 - [ ] Returns notifications for the current customer only
 - [ ] Sorted by `sent_at` descending (newest first)
@@ -296,6 +327,8 @@ def send_fcm_push(customer, title, body):
 
 > **Requires**: 6.1
 
+Marks a specific notification as read (sets `read = 1`). This is called when the customer taps/clicks a notification in the UI. The operation is **idempotent** — marking an already-read notification doesn't error. Customer isolation is enforced: a customer can only mark their own notifications.
+
 **Acceptance Criteria**:
 - [ ] Customer can mark their own notification as read
 - [ ] Customer CANNOT mark another customer's notification
@@ -307,6 +340,8 @@ def send_fcm_push(customer, title, body):
 ### 6.3 `register_fcm_token` / `deregister_fcm_token`
 
 > **Requires**: D01-8.8 (Auth flow calls these on login/logout)
+
+These endpoints manage the **FCM token registry**. On login, the Flutter app sends its device's FCM token to `register_fcm_token`. On logout, it calls `deregister_fcm_token` to remove it. Multiple tokens per user are allowed (the user may have a phone and a tablet). Token registration is **idempotent** — registering the same token twice doesn't create a duplicate.
 
 **Acceptance Criteria**:
 - [ ] `register_fcm_token` stores token for current user
@@ -322,6 +357,8 @@ def send_fcm_push(customer, title, body):
 
 > **Requires**: D01-7.3 (`portal_header.html` template), 6.1 (notification API)
 
+A **bell icon** in the portal header that shows the unread notification count as a badge. Clicking the bell opens a dropdown with the 10 most recent notifications. Each notification shows the subject, relative time ("2 hours ago"), and an unread dot. Clicking a notification marks it as read and optionally navigates to the referenced document (e.g., the invoice page). The badge count refreshes periodically (JS polling every 60 seconds) or via WebSocket.
+
 **Acceptance Criteria**:
 - [ ] Bell icon in portal header shows unread badge count
 - [ ] Clicking bell opens dropdown with recent 10 notifications
@@ -335,6 +372,8 @@ def send_fcm_push(customer, title, body):
 ### 7.2 Email Template (`templates/emails/rental_reminder.html`)
 
 > **Requires**: D01-2.2 (template directory)
+
+A **branded HTML email template** used for all rental-related emails (reminders, receipts, escalations, KYC updates). The template includes a branded header (with logo placeholder), subject line, body text area, and a footer with business contact info pulled from Rental Configuration. All strings are wrapped in `_()` for i18n support. The template must render correctly across Gmail, Outlook, and Apple Mail (using inline CSS for compatibility).
 
 **Acceptance Criteria**:
 - [ ] Template includes branded header with logo placeholder
@@ -351,6 +390,8 @@ def send_fcm_push(customer, title, body):
 ### 8.1 FCM Service (`core/services/fcm_service.dart`)
 
 > **Requires**: D01-8.2 (firebase_messaging dependency), D01-8.5 (secure storage for token), 6.3 (register API)
+
+The **FCM Service** manages the Flutter app's push notification lifecycle. On login, it retrieves the device's FCM token and registers it with the server. On logout, it deregisters. When a push notification arrives while the app is in the **foreground**, it uses `flutter_local_notifications` to display a system notification (FCM doesn't auto-display foreground pushes). When a notification is tapped, it navigates to the relevant screen using a deep link embedded in the `data` payload. The service also handles **token refresh events** (Firebase may rotate tokens) by re-registering with the server.
 
 ```dart
 class FcmService {
@@ -389,6 +430,8 @@ class FcmService {
 
 > **Requires**: D01-8.3 (screen stub), 6.1 (notification API)
 
+The Flutter **notification center** screen. Lists all notifications with a type icon (payment, KYC, booking, etc.), subject, body preview, relative time, and an unread dot. Tapping a notification marks it as read (dot removed) and navigates to the referenced screen (e.g., the invoice detail). The unread count is displayed as a badge on the bottom navigation bar.
+
 **Acceptance Criteria**:
 - [ ] Lists notifications: type icon, subject, body preview, time ago, unread dot
 - [ ] Pull-to-refresh reloads notifications
@@ -401,6 +444,8 @@ class FcmService {
 ### 8.3 Notification Provider
 
 > **Requires**: D01-8.6 (FrappeClient), 6.1 (API)
+
+Two Riverpod providers: `customerNotifications` (paginated list of all notifications) and `unreadNotificationCount` (a lightweight int for badge display). The count provider is kept **separate** from the full list because it needs to refresh frequently (every 60 seconds) without fetching the entire notification list. Marking a notification as read triggers `ref.invalidate()` to update both providers.
 
 ```dart
 @riverpod

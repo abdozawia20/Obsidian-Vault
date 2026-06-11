@@ -10,7 +10,9 @@
 
 ## 1. Overview
 
-Asset lifecycle, availability calendar, concurrency-safe reservation, SEO-optimised public catalog, and browsing experience on web and Flutter.
+This domain manages the **rental assets themselves** — the properties and vehicles that customers can browse, reserve, and rent. It covers the full asset lifecycle (Available → Reserved → Rented → Maintenance → Retired), the public-facing catalog that customers browse on the web and app, the availability calendar showing which dates are blocked, and the **concurrency-safe reservation** mechanism that prevents two customers from booking the same asset simultaneously.
+
+The domain also handles draft booking expiry (unreviewable bookings auto-expire after a configured time), rejection handling (staff can reject bookings with a required reason), and SEO optimization for the public catalog pages.
 
 ---
 
@@ -19,6 +21,10 @@ Asset lifecycle, availability calendar, concurrency-safe reservation, SEO-optimi
 ### 2.1 Schema Definition
 
 > **Requires**: D01-2.2 (DocType directory `rental_asset/` must exist), D01-5.2 (role permissions)
+
+The **Rental Asset** is the central DocType of the entire platform — everything revolves around it. It represents a single rentable unit (a flat, a vehicle, or any future asset type). The schema includes pricing (`monthly_rate`, `deposit_amount`), location data (city/region + GPS coordinates for map display), a media gallery (`images` child table), and status tracking through a defined state machine. The `version` field enables optimistic concurrency control for race-safe reservations.
+
+Child apps (Flats, Vehicles) extend this DocType with **custom fields** rather than modifying the base schema.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -56,6 +62,8 @@ Asset lifecycle, availability calendar, concurrency-safe reservation, SEO-optimi
 
 > **Requires**: 2.1 (schema with `status` field)
 
+Assets follow a **strict state machine** — not every status change is allowed. An Available asset can be Reserved (booking started) or put into Maintenance, but it cannot jump directly to Rented (must go through Reserved first). A Rented asset can return to Available (lease ended) or go to Maintenance (repair needed). A Retired asset is a **terminal state** — it can never be reactivated. This prevents data inconsistencies and provides clear lifecycle tracking.
+
 ```python
 ALLOWED = {
     "Available": ["Reserved", "Maintenance", "Retired"],
@@ -89,6 +97,10 @@ def set_status(self, new_status):
 
 > **Requires**: 2.1 (Rental Asset for link), D05-2.1 (Rental Agreement for link — can stub)
 
+An **Asset Inspection** records the physical condition of an asset at a specific point in time — typically at move-in (Entry) and move-out (Exit). Entry inspections document the baseline condition. Exit inspections compare against the entry state and calculate repair costs for any new damage. The inspection includes a photo evidence table, damage notes, estimated repair cost, and a tenant signature acknowledgment.
+
+Child apps extend the `checklist` with variant-specific rows (e.g., Flats adds appliance checks, Vehicles adds mileage and bodywork items).
+
 | Field | Type | Notes |
 |---|---|---|
 | `agreement` | Link → Rental Agreement | |
@@ -115,6 +127,8 @@ def set_status(self, new_status):
 
 > **Requires**: 3.1 (inspection schema), D06-4.1 (Deposit Ledger schema)
 
+When a tenant moves out and damage is found, the **exit inspection** triggers a deposit deduction. If `estimated_repair_cost > 0`, a `Deposit Deduction` row is created in the tenant's deposit ledger with `deduction_status = Pending`. The deduction is NOT auto-committed — the tenant has a dispute window (configured in D01) to challenge it. Only entry inspections are excluded from this logic (documenting pre-existing condition doesn't trigger deductions).
+
 **Acceptance Criteria**:
 - [ ] Submitting an `Exit` inspection with `estimated_repair_cost > 0` creates a `Deposit Deduction` row
 - [ ] Deduction row has `deduction_status = Pending` (not auto-committed)
@@ -128,6 +142,10 @@ def set_status(self, new_status):
 ### 4.1 `asset_catalog_query.py`
 
 > **Requires**: 2.1 (Rental Asset schema with all filter fields)
+
+The **catalog query service** is the core search engine for the platform. Both the web portal (SSR rendering) and the API endpoint (Flutter app) use this same function — ensuring identical search behavior across all channels. It filters by asset type, location (with SQL injection protection), and price range, and returns paginated results with cover images.
+
+Performance optimization: cover images are fetched in a **single batch query** (not N+1), and the location filter sanitizes `%` and `_` wildcards to prevent SQL injection through the LIKE clause.
 
 ```python
 def query_available_assets(asset_type="", location="", max_price=None,
@@ -186,6 +204,8 @@ def query_available_assets(asset_type="", location="", max_price=None,
 
 > **Requires**: 2.1 (Rental Asset with `status` field)
 
+The most critical concurrency challenge in the platform: **two customers trying to book the same asset at the same time**. Without protection, both would see `Available`, both would proceed, and you'd have a double-booking. The `SELECT FOR UPDATE` statement acquires a database-level row lock, so the second request blocks until the first completes. If the first request reserved the asset, the second finds `Reserved` status and gets a conflict error.
+
 ```python
 def reserve_asset(asset_name):
     frappe.db.sql("SELECT status FROM `tabRental Asset` WHERE name = %s FOR UPDATE", asset_name)
@@ -206,6 +226,8 @@ def reserve_asset(asset_name):
 ### 5.2 Optimistic Concurrency Fallback
 
 > **Requires**: 2.1 (`version` field on Rental Asset), 5.1
+
+Some database configurations (Galera/MariaDB clusters) don't guarantee `SELECT FOR UPDATE` isolation. This **fallback mechanism** uses optimistic concurrency control: the `version` column is incremented atomically in the same `UPDATE` statement that changes the status. If two requests read the same version and both try to update, only one succeeds (the one where `version` still matches). The other gets zero rows affected and knows a concurrent write happened.
 
 ```python
 rows = frappe.db.sql(
@@ -228,6 +250,8 @@ if rows == 0:
 ### 6.1 Draft Expiry Scheduler
 
 > **Requires**: D01-3.1 (`draft_expiry_hours` config field), 2.2 (status transitions), D05-2.1 (Rental Agreement schema)
+
+When a customer creates a booking, it starts as a `Draft` agreement awaiting staff review. If the staff doesn't review it within the configured time window (default 48 hours), the booking **auto-expires**: the agreement status changes to `Expired`, the asset returns to `Available`, and the customer receives a notification. This prevents assets from being tied up indefinitely in limbo. The scheduler runs every 5 minutes (registered in D01 hooks.py) for time-sensitive expiration.
 
 ```python
 def expire_unreviewed_bookings():
@@ -257,6 +281,8 @@ def expire_unreviewed_bookings():
 
 > **Requires**: D05-2.1 (Rental Agreement with `rejection_reason` field), 2.2 (status transitions)
 
+Staff can **reject a booking** if they decide the customer or terms aren't suitable. The rejection requires a reason of at least 20 characters (to prevent lazy "no" rejections and give the customer actionable feedback). On rejection, the asset returns to `Available` and the customer receives the rejection reason via push + email. Already-active agreements cannot be rejected — they go through the termination flow instead.
+
 ```python
 def reject_booking(self, reason):
     if len(reason or "") < 20:
@@ -284,6 +310,8 @@ def reject_booking(self, reason):
 
 > **Requires**: 4.1 (catalog query service)
 
+The public-facing API that the Flutter app calls to populate the catalog screen. It wraps the catalog query service (4.1) and exposes it as a Frappe whitelisted method with token auth and rate limiting. The response follows the D01-6.2 pagination standard.
+
 **Acceptance Criteria**:
 - [ ] Returns paginated list matching D01-6.2 pagination standard
 - [ ] Token auth required
@@ -296,6 +324,8 @@ def reject_booking(self, reason):
 
 > **Requires**: 2.1 (Rental Asset schema)
 
+Returns the **full details** of a single asset for the detail page/screen. This includes everything: all images, full description, pricing, location, and any custom fields set by child apps (e.g., number of bedrooms for flats, vehicle make/model). Returns HTTP 404 for non-existent assets instead of an empty result.
+
 **Acceptance Criteria**:
 - [ ] Returns full asset data including images, description, preview info
 - [ ] Returns variant-specific custom fields (set by child apps)
@@ -306,6 +336,8 @@ def reject_booking(self, reason):
 ### 7.3 `get_asset_availability`
 
 > **Requires**: 2.1 (Rental Asset), D05-2.1 (Rental Agreement with date ranges)
+
+Returns the **blocked date ranges** for a given asset in a given month. The response is intentionally **opaque** — it shows which dates are blocked but not why (could be another tenant's booking, a maintenance window, or a hold). This protects tenant privacy while letting prospective renters know when the asset is free.
 
 **Acceptance Criteria**:
 - [ ] Returns blocked date ranges for the given month/year
@@ -319,6 +351,8 @@ def reject_booking(self, reason):
 
 > **Requires**: 2.1 (`is_featured` field)
 
+Returns **curated assets** that the operator wants to promote. These appear in carousels on the home page and app home screen. Only assets that are both `is_featured=1` AND `status=Available` are returned — no point featuring an asset that can't be booked.
+
 **Acceptance Criteria**:
 - [ ] Returns only assets where `is_featured=1` AND `status=Available`
 - [ ] Paginated per D01-6.2 standard
@@ -329,6 +363,8 @@ def reject_booking(self, reason):
 ### 7.5 `get_active_rental_summary`
 
 > **Requires**: D05-2.1 (Rental Agreement), D06 (invoices)
+
+Powers the **"My Active Rentals" summary card** on the home screen. Returns the logged-in customer's active agreements with their next invoice amount and due date. This gives customers an at-a-glance view of their financial obligations without navigating to the full invoices page.
 
 **Acceptance Criteria**:
 - [ ] Returns current customer's active agreements with next invoice data
@@ -343,6 +379,8 @@ def reject_booking(self, reason):
 
 > **Requires**: 4.1 (catalog query service), D01-7.3 (page stub)
 
+The **catalog page** is the main public-facing page of the rental platform. It's **server-side rendered** (SSR) so search engines can crawl and index the available assets. The controller calls the same catalog query service that the API uses, ensuring identical results. URL parameters (`?type=Flat&max_price=2000`) are passed through as filters for bookmarkable/shareable filtered URLs.
+
 **Acceptance Criteria**:
 - [ ] `/rentals` renders SSR with first 24 assets
 - [ ] `curl /rentals` returns HTML with asset cards (SEO-crawlable)
@@ -354,6 +392,8 @@ def reject_booking(self, reason):
 ### 8.2 AJAX Filter (`catalog.js`)
 
 > **Requires**: 8.1 (page renders), 7.1 (API endpoint)
+
+After the initial SSR page load, **filter changes happen via AJAX** without full page reloads. When a user changes the asset type dropdown, adjusts the price range, or types a location, the JavaScript calls the API and re-renders only the asset grid. A shimmer loading skeleton provides visual feedback during the fetch. Pagination controls appear at the bottom when results span multiple pages.
 
 ```javascript
 function loadAssets(filters = {}, page = 1) {
@@ -383,6 +423,8 @@ function loadAssets(filters = {}, page = 1) {
 
 > **Requires**: 2.1 (Rental Asset schema), D01-7.3 (page stub)
 
+The **asset detail page** shows everything about a single asset: full description, image gallery, pricing, location, and the booking CTA. It's also SSR-rendered with **Open Graph meta tags** (`og:title`, `og:description`, `og:image`) for social media sharing — when someone shares a listing on WhatsApp or Facebook, it shows a rich preview. If the asset has a 3D model or 360° photo, the preview embed is rendered inline.
+
 **Acceptance Criteria**:
 - [ ] Page renders with asset name, description, images, monthly rate, deposit
 - [ ] `og:title`, `og:description`, `og:image` meta tags set for social sharing
@@ -394,6 +436,8 @@ function loadAssets(filters = {}, page = 1) {
 ### 9.2 Availability Calendar (`asset_detail.js`)
 
 > **Requires**: 9.1 (page context), 7.3 (availability API)
+
+An **interactive calendar** embedded in the asset detail page showing which dates are available and which are blocked. Blocked dates are visually styled (grayed out, non-clickable) but no reason is disclosed for privacy. The calendar fetches data month-by-month as the user navigates forward/backward, keeping the initial page load lightweight.
 
 **Acceptance Criteria**:
 - [ ] Calendar renders with current month focused
@@ -409,6 +453,8 @@ function loadAssets(filters = {}, page = 1) {
 ### 10.1 Catalog Provider
 
 > **Requires**: D01-8.6 (FrappeClient), 7.1 (API endpoint)
+
+A Riverpod provider that fetches available assets from the API. It accepts an `AssetFilter` parameter (type, location, price) and re-fetches when filters change. The provider uses `keepAlive: true` so catalog data survives navigation (going to asset detail and back doesn't re-fetch the catalog).
 
 ```dart
 @riverpod
@@ -426,6 +472,8 @@ Future<List<RentalAsset>> availableAssets(Ref ref, AssetFilter filter) => /* ...
 
 > **Requires**: 10.1 (provider), D01-8.3 (screen stub)
 
+The main **catalog screen** in the Flutter app. Each asset is displayed as an `AssetCardWidget` showing the cover image, name, monthly price, and location. The list uses **infinite scroll** — when the user reaches the bottom, the next page loads automatically. A shimmer skeleton shows during initial loading, and an empty state appears when no assets match the current filters.
+
 **Acceptance Criteria**:
 - [ ] Grid of `AssetCardWidget` with cover image, name, price, location
 - [ ] Infinite scroll loads next page when reaching bottom
@@ -438,6 +486,8 @@ Future<List<RentalAsset>> availableAssets(Ref ref, AssetFilter filter) => /* ...
 
 > **Requires**: 10.2 (catalog screen)
 
+A **bottom sheet** that opens from the catalog screen, providing filter controls: asset type tabs (All / Flat / Vehicle), a text input for location, and a slider for maximum price. Applying filters dismisses the sheet and refreshes the catalog grid. A "Clear Filters" button resets everything to defaults.
+
 **Acceptance Criteria**:
 - [ ] Bottom sheet with type tabs (All / Flat / Vehicle), location input, max price slider
 - [ ] Applying filters refreshes the catalog grid
@@ -449,6 +499,8 @@ Future<List<RentalAsset>> availableAssets(Ref ref, AssetFilter filter) => /* ...
 
 > **Requires**: D01-8.6 (FrappeClient), 7.2 (asset detail API), D01-8.3 (screen stub)
 
+The Flutter equivalent of the web asset detail page (9.1). Displays all asset information with a **swipeable image carousel**, full description, pricing, and CTA buttons. If the asset has a 3D/360° preview configured, a "Preview" button is shown.
+
 **Acceptance Criteria**:
 - [ ] Displays all asset info: name, description, images, rate, deposit
 - [ ] Image gallery is swipeable (carousel)
@@ -459,6 +511,8 @@ Future<List<RentalAsset>> availableAssets(Ref ref, AssetFilter filter) => /* ...
 ### 10.5 Availability Calendar Widget
 
 > **Requires**: 10.4 (detail screen), 7.3 (availability API)
+
+A **reusable calendar widget** that renders inside the asset detail screen. It uses `table_calendar` to show a month view where blocked dates are visually distinct and non-tappable. Month navigation triggers a provider invalidation to fetch fresh availability data. The widget handles loading and error states gracefully.
 
 ```dart
 class AvailabilityCalendarWidget extends ConsumerWidget { /* ... */ }
@@ -475,6 +529,8 @@ class AvailabilityCalendarWidget extends ConsumerWidget { /* ... */ }
 ### 10.6 Home Screen Enhancements
 
 > **Requires**: 7.4 (featured assets API), 7.5 (active rental summary API)
+
+Two widgets added to the Flutter **home screen**: (1) `FeaturedAssetsCarousel` — a horizontally scrollable row of operator-promoted assets, and (2) `ActiveRentalSummaryCard` — showing the logged-in customer's next invoice amount and due date. Both sections **hide themselves** when there's no data (no featured assets = hidden carousel, no active rental = hidden card), keeping the home screen clean.
 
 **Acceptance Criteria**:
 - [ ] `FeaturedAssetsCarousel` shows horizontal scroll of featured assets

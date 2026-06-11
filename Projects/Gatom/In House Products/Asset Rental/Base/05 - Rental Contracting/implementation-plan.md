@@ -10,7 +10,9 @@
 
 ## 1. Overview
 
-Rental agreement lifecycle: multi-step booking, KYC gate, e-signature, activation, renewal, open-ended termination, self-cancellation, and exit inspection.
+This is the **core business domain** — it handles everything related to the rental agreement: the multi-step booking form, the KYC verification gate, electronic signatures, agreement activation, PDF generation, renewal, open-ended termination with notice periods, self-cancellation limits, and rent escalation with configurable caps.
+
+The agreement follows a lifecycle: `Draft` (customer submitted, pending staff review) → `Active` (approved, billing starts) → `Expired`/`Terminated` (ended). Customers can self-cancel Draft bookings within a configurable limit. Open-ended agreements (no end date) require a notice period for termination.
 
 ---
 
@@ -19,6 +21,8 @@ Rental agreement lifecycle: multi-step booking, KYC gate, e-signature, activatio
 ### 2.1 Schema Definition
 
 > **Requires**: D01-2.2 (DocType directory), D01-5.2 (role permissions), D04-2.1 (Rental Asset for link)
+
+The **Rental Agreement** is the legal contract between the tenant and the landlord. It captures who is renting what, for how long, at what price, and with what terms. Key design decisions: `end_date` is nullable (open-ended leases are common in the Middle East), `monthly_rate` is an **editable copy** from the asset (negotiated rates may differ), `additional_charges` is a child table for variant-specific line items (e.g., utility billing injected by Flats), and `track_changes = 1` enables Frappe's built-in version history for audit compliance.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -59,6 +63,8 @@ Rental agreement lifecycle: multi-step booking, KYC gate, e-signature, activatio
 
 > **Requires**: 2.1, D04-5.1 (concurrency lock), D06-2.1 (subscription factory)
 
+The submission handler performs **three atomic actions**: (1) reserves the asset using the concurrency-safe lock from D04 (preventing double-booking), (2) creates an ERPNext Subscription (which generates recurring invoices), and (3) creates a Deposit Ledger (tracking the tenant's security deposit). All three must succeed or the submission fails — partial state is unacceptable.
+
 ```python
 def on_submit(self):
     reserve_asset(self.asset)
@@ -79,6 +85,8 @@ def on_submit(self):
 
 > **Requires**: 2.1, 2.2, D04-2.2 (status transitions)
 
+Cancellation reverses the submission: the asset returns to `Available` and the ERPNext Subscription is cancelled (no more invoices will be generated). Only Rental Managers can cancel Active agreements. Once cancelled, an agreement **cannot be re-submitted** — a new booking must be created instead.
+
 **Acceptance Criteria**:
 - [ ] Cancelled agreement's asset returns to `Available`
 - [ ] Linked ERPNext Subscription is cancelled
@@ -92,6 +100,8 @@ def on_submit(self):
 ### 3.1 `cancel_booking_request` Endpoint
 
 > **Requires**: 2.1 (agreement schema), D01-3.1 (`self_cancel_limit` config field)
+
+Customers can cancel their own **Draft** bookings (those still pending staff review) without needing to contact support. However, there's an **abuse prevention limit**: by default, a customer can only cancel 3 bookings within a 30-day rolling window. This prevents customers from repeatedly reserving and cancelling assets, which would block other potential renters. The limit is configurable in Rental Configuration. Active agreements cannot be cancelled through this endpoint — they require staff-initiated termination.
 
 ```python
 @frappe.whitelist()
@@ -133,6 +143,8 @@ def cancel_booking_request(agreement_name):
 
 > **Requires**: 2.1 (agreement with `termination_date`), D01-3.1 (`open_ended_notice_days`)
 
+Open-ended agreements (where `end_date` is null) don't have a natural expiration. Either party can terminate by giving a **notice period** (default 30 days, configured in Rental Configuration). This endpoint validates that the proposed termination date is at least the required notice days in the future, records it on the agreement, and notifies the tenant. Fixed-term agreements (with an `end_date`) cannot use this endpoint — they simply expire on their end date.
+
 **Acceptance Criteria**:
 - [ ] Only active, open-ended (no `end_date`) agreements can be terminated
 - [ ] Termination date must be at least `open_ended_notice_days` from today
@@ -146,6 +158,8 @@ def cancel_booking_request(agreement_name):
 
 > **Requires**: 4.1, D06-2.1 (billing engine)
 
+When an agreement terminates mid-month, the final invoice should only charge for the **days actually occupied**, not the full month. For example, if termination is on the 15th and the monthly rate is 3000, the final invoice should be ~1500. If termination falls on the 1st of the month (full-month boundary), a standard full invoice is generated instead. After the final invoice, the ERPNext Subscription is cancelled.
+
 **Acceptance Criteria**:
 - [ ] When termination month arrives, final invoice is pro-rated: `days_remaining / days_in_month * monthly_rate`
 - [ ] Subscription is cancelled after final invoice generation
@@ -158,6 +172,8 @@ def cancel_booking_request(agreement_name):
 ### 5.1 Annual Escalation with Cap
 
 > **Requires**: 2.1 (`annual_escalation_pct`, `escalation_justification`), D01-3.1 (`rent_escalation_cap_pct`)
+
+Rent prices can be increased annually, but to **protect tenants from excessive hikes**, the operator configures a cap percentage (e.g., 5%). Escalations within the cap are applied automatically. Escalations **exceeding the cap** require a written justification (e.g., "market rate adjustment per municipal regulation XYZ") — this ensures there's always a documented reason for above-cap increases. All escalations are tracked in Frappe's version history.
 
 **Acceptance Criteria**:
 - [ ] Escalation within cap (e.g., 3% when cap is 5%) applies without justification
@@ -174,6 +190,8 @@ def cancel_booking_request(agreement_name):
 
 > **Requires**: 2.1 (agreement data), D01-3.1 (config for branding)
 
+When an agreement transitions to `Active` status (staff approves the booking), a **formal PDF agreement** is automatically generated. The PDF contains the full contract: branded header, tenant/landlord details, rental terms, charges table, and the tenant's e-signature image. The PDF is stored in S3 (not the local filesystem) and its URL is saved on the agreement for customer download.
+
 **Acceptance Criteria**:
 - [ ] When status changes to `Active`, PDF is auto-generated
 - [ ] PDF contains: header with brand, tenant/landlord details, terms, charges table, e-signature image
@@ -186,6 +204,8 @@ def cancel_booking_request(agreement_name):
 ### 6.2 E-Signature Advisory
 
 > **Requires**: D01-3.1 (`esignature_advisory_shown` config flag)
+
+The platform uses a **canvas e-signature** (freehand drawing), not a legally binding digital signature like DocuSign. On the first agreement submission, the system shows an advisory: "Canvas e-signature is a convenience acknowledgement only." This sets user expectations and may satisfy regulatory disclosure requirements. The advisory is shown once globally (not per agreement) and suppressed after acknowledgement.
 
 **Acceptance Criteria**:
 - [ ] First agreement submission shows advisory: "Canvas e-signature is a convenience acknowledgement only"
@@ -201,6 +221,8 @@ def cancel_booking_request(agreement_name):
 
 > **Requires**: 2.1, D03-5.1 (KYC gate), D04-5.1 (concurrency lock)
 
+The main **booking API endpoint** that the web form and Flutter app call to create a new rental agreement. It performs three checks: (1) KYC verification (unverified customers are blocked), (2) asset availability (concurrency lock prevents double-booking), and (3) booking validation. On success, it returns the agreement name, status, draft expiry countdown, and a payment URL (if immediate deposit payment is required).
+
 **Acceptance Criteria**:
 - [ ] KYC-unverified customer → HTTP 403 with "KYC Required"
 - [ ] Available asset → Draft agreement created, asset set to `Reserved`
@@ -213,6 +235,8 @@ def cancel_booking_request(agreement_name):
 
 > **Requires**: 2.1
 
+Returns the current customer's **full agreement history**: active, draft (pending review), and past (expired, terminated, cancelled). This powers both the web "My Rentals" page and the Flutter My Rentals screen. The endpoint enforces **customer isolation** — it filters by the logged-in user and never returns another customer's agreements.
+
 **Acceptance Criteria**:
 - [ ] Returns only agreements for the current customer
 - [ ] Includes both active and past agreements
@@ -224,6 +248,8 @@ def cancel_booking_request(agreement_name):
 ### 7.3 `sign_agreement`
 
 > **Requires**: 2.1 (`signature_data` field)
+
+Accepts a **base64-encoded signature image** from the client and stores it on the agreement. The signature is captured via a canvas pad (web) or the `signature` Flutter package (app). Only the owning customer can sign their own agreement. An empty signature is rejected. Re-signing (overwriting a previous signature) is allowed in case the customer wants to redo it.
 
 **Acceptance Criteria**:
 - [ ] Stores base64 signature data on the agreement
@@ -239,6 +265,8 @@ def cancel_booking_request(agreement_name):
 
 > **Requires**: D01-7.3 (page stub), D03-5.1 (KYC gate)
 
+The booking form controller enforces **two gates** before rendering: (1) the user must be logged in (guests are redirected to login with a return URL), and (2) the user must have KYC status `Verified` (non-verified users are redirected to `/my-kyc`). Only verified customers see the actual booking form. The context includes asset details and customer info for pre-filling.
+
 **Acceptance Criteria**:
 - [ ] Guest → redirected to `/login?redirect-to=/rentals/{asset}/book`
 - [ ] Non-KYC-verified user → redirected to `/my-kyc`
@@ -250,6 +278,8 @@ def cancel_booking_request(agreement_name):
 ### 8.2 Step Validation (`booking.js`)
 
 > **Requires**: 8.1 (form HTML)
+
+The booking form is a **5-step wizard**: (1) dates (start date, duration, billing cycle), (2) personal details (tenant info), (3) KYC (read-only verification status), (4) e-signature (freehand canvas), (5) confirmation (review all details before submitting). Each step validates before allowing forward navigation. Back navigation preserves all entered data. Errors are shown inline (not alert boxes).
 
 ```javascript
 const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
@@ -268,6 +298,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 
 > **Requires**: 8.2
 
+Booking is a multi-step form that takes time to complete. If the user accidentally closes the tab or refreshes, they **shouldn't lose their progress**. Each step advancement saves the current form state to `sessionStorage`. On page reload, the form restores the saved state and step position. The saved state is cleared on successful submission or explicit cancellation.
+
 **Acceptance Criteria**:
 - [ ] Each step advancement saves form state to `sessionStorage`
 - [ ] Page reload restores form data and step position
@@ -280,6 +312,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 
 > **Requires**: 8.2, 7.1 (submit API)
 
+The final step's submit button calls the booking API. On success, the handler checks if a `payment_url` was returned (meaning the tenant needs to pay the deposit immediately). If yes, the user is redirected to the payment gateway. If no payment URL (e.g., bank transfer), the user is redirected to `/my-rentals` to see their pending booking.
+
 **Acceptance Criteria**:
 - [ ] Submission calls `submit_booking_request` via `frappe.call`
 - [ ] On success with `payment_url`: redirect to payment gateway
@@ -291,6 +325,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 ### 8.5 Signature Pad (`signature_pad.js`)
 
 > **Requires**: 8.2 (step 4 panel)
+
+A **freehand drawing canvas** where the customer draws their signature with a mouse or touch input. The canvas produces a base64-encoded PNG that's stored on the agreement and embedded in the PDF. The "Clear" button resets the canvas for retry. The "Next" button is disabled until the canvas has content (preventing empty signatures).
 
 **Acceptance Criteria**:
 - [ ] Canvas renders for freehand signature drawing
@@ -306,6 +342,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 
 > **Requires**: 8.4 (submission success redirects here), 3.1 (cancel API)
 
+After submitting a booking, the customer lands on a **pending confirmation page** showing a "Pending Review" badge and an estimated review time. If the customer changes their mind, they can cancel directly from this page via the "Cancel Request" button (subject to the self-cancellation limit). After cancellation, they're redirected to the catalog with a confirmation toast.
+
 **Acceptance Criteria**:
 - [ ] Shows "Pending Review" badge with ETA
 - [ ] "Cancel Request" button calls `cancel_booking_request`
@@ -320,6 +358,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 
 > **Requires**: D01-7.3 (page stub), 7.2 (get_my_agreements)
 
+The **My Rentals** portal page is the customer's dashboard for all their rental agreements. Active agreements are shown prominently with status badges, asset names, and monthly rates. Draft agreements show a "Pending Review" badge. Past agreements (expired, terminated, cancelled) are shown in a separate collapsible section, limited to the 10 most recent to keep the page manageable.
+
 **Acceptance Criteria**:
 - [ ] Guest → redirected to login
 - [ ] Active agreements shown with status badge, asset name, rate
@@ -332,6 +372,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 ### 10.2 Suspended Account Block
 
 > **Requires**: 10.1
+
+When a customer's account is suspended (e.g., due to excessive overdue payments), they should still be able to **view** their existing rentals and invoices, but the "Book" CTA is replaced with an "Account on hold" badge. This is a non-clickable visual indicator (not a disabled button that might confuse users into thinking it's a bug). Contact information is shown if configured.
 
 **Acceptance Criteria**:
 - [ ] Suspended customer sees "Account on hold" instead of "Book" CTA
@@ -346,6 +388,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 
 > **Requires**: D01-8.6 (FrappeClient), 7.1 (submit API)
 
+The **BookingNotifier** is the Riverpod state manager for the entire multi-step booking flow in Flutter. It holds the current step's data (dates, personal details, signature, loading flag) and provides typed methods to update each field. The `submit()` method calls the booking API and returns the payment URL on success. If the submission happens while offline, the booking is saved to the **outbox** (11.4) for automatic retry.
+
 **Acceptance Criteria**:
 - [ ] `BookingState` holds: dates, personal details, signature, loading flag, error
 - [ ] `setDates()`, `setPersonalDetails()`, `setSignature()` update state immutably
@@ -358,6 +402,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 ### 11.2 Step Screens
 
 > **Requires**: 11.1 (state management), D01-8.3 (screen stubs)
+
+The Flutter booking flow mirrors the web's 5-step wizard (8.2), with each step as a separate Dart file. Step 1 (dates) has a date picker and billing cycle selector. Step 2 (details) collects personal info and tenant type. Step 3 (KYC) is read-only, showing the verification status badge. Step 4 (signature) uses the `signature` Flutter package for finger-drawing. Step 5 (confirm) shows a full summary of all entered data before the final submit.
 
 | Step | File | Purpose |
 |---|---|---|
@@ -381,6 +427,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 
 > **Requires**: 11.1
 
+The Flutter equivalent of the web's `sessionStorage` (8.3). Each step completion serializes the `BookingState` to `SharedPreferences`. If the user kills the app mid-flow and reopens it, the booking state is restored and they continue from where they left off. The saved state is cleared on successful submission or explicit cancel.
+
 **Acceptance Criteria**:
 - [ ] Each step completion serializes `BookingState` to `SharedPreferences`
 - [ ] App kill → reopen → `BookingFlowScreen` restores saved state
@@ -392,6 +440,8 @@ const STEPS = ['dates', 'details', 'kyc', 'sign', 'confirm'];
 ### 11.4 Booking Outbox (Offline)
 
 > **Requires**: 11.1, D01-8.2 (`connectivity_plus` dependency)
+
+The **booking outbox** is the most critical offline feature. If a customer completes the entire 5-step booking flow and hits submit while offline (e.g., in a basement or elevator), the booking is serialized to local storage instead of being lost. When connectivity returns, `retryAll()` automatically fires and attempts to submit. Successful retries remove the booking from the outbox; failures keep it for the next attempt. The outbox persists across app restarts.
 
 ```dart
 @riverpod
@@ -412,6 +462,8 @@ class BookingOutbox extends _$BookingOutbox { /* ... */ }
 
 > **Requires**: 11.1 (post-submission), 3.1 (cancel API)
 
+The Flutter equivalent of the web pending page (9.1). After submitting a booking, the customer sees a pending screen with the option to cancel. Cancel success navigates to My Rentals with a confirmation toast. Cancel failure (limit reached) shows an error toast explaining they've hit the maximum cancellation limit.
+
 **Acceptance Criteria**:
 - [ ] After submission: pending screen with "Cancel Request" button
 - [ ] Cancel success → navigate to My Rentals with confirmation toast
@@ -425,6 +477,8 @@ class BookingOutbox extends _$BookingOutbox { /* ... */ }
 
 > **Requires**: D01-8.6 (FrappeClient), 7.2 (get_my_agreements API)
 
+A Riverpod provider that fetches all agreements for the current customer. It powers the My Rentals screen with reactive data. Draft agreements show a "Pending Review" badge alongside active ones. Pull-to-refresh triggers a full reload from the API.
+
 **Acceptance Criteria**:
 - [ ] Fetches all agreements for current customer
 - [ ] Includes Draft agreements with "Pending Review" badge
@@ -435,6 +489,8 @@ class BookingOutbox extends _$BookingOutbox { /* ... */ }
 ### 12.2 Agreement Detail Screen
 
 > **Requires**: 12.1
+
+A dedicated screen showing the **full details** of a single agreement: the asset being rented, dates, monthly rate, status, and a deposit status section. If the agreement has an `agreement_pdf_url`, a "Download PDF" button allows the customer to save the formal contract. The deposit section shows the current balance from the Deposit Ledger (D06).
 
 **Acceptance Criteria**:
 - [ ] Shows agreement details: asset, dates, rate, status

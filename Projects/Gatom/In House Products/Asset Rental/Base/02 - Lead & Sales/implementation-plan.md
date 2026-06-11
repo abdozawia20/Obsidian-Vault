@@ -10,7 +10,9 @@
 
 ## 1. Overview
 
-Pre-contract sales pipeline: inquiry capture from web/app/walk-in/phone, quotation generation, lead-to-agreement conversion tracking, and follow-up scheduling.
+Before a customer signs a rental agreement, they go through a **sales pipeline**: they inquire about an asset, the sales team follows up, a quotation is generated, and (if accepted) it converts into an agreement. The **Lead & Sales** domain handles this pre-contract lifecycle — from the moment a potential customer fills out an inquiry form on the website or app, through agent follow-up, to quotation generation with negotiated rates.
+
+The domain supports multiple inquiry channels (web form, mobile app, walk-in, phone, referral), duplicate detection, auto-assignment to configured agents, and a management report showing conversion rates per channel.
 
 ---
 
@@ -19,6 +21,8 @@ Pre-contract sales pipeline: inquiry capture from web/app/walk-in/phone, quotati
 ### 2.1 Schema Definition
 
 > **Requires**: D01-2.2 (DocType directory `rental_lead/` must exist), D01-5.2 (role permissions)
+
+A **Rental Lead** represents a potential customer who has expressed interest in renting. It captures their contact details, which asset they're interested in (if any), their source channel, and the current stage in the pipeline (`New` → `Contacted` → `Qualified` → `Converted` or `Lost`). An `assigned_to` agent tracks who is responsible for following up, and `follow_up_date` drives reminder notifications.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -51,6 +55,8 @@ Pre-contract sales pipeline: inquiry capture from web/app/walk-in/phone, quotati
 
 > **Requires**: 2.1 (schema must be created)
 
+The lead validation has two important checks: (1) email format validation (rejects obviously invalid addresses), and (2) **duplicate detection** — if there's already an active (non-Converted, non-Lost) lead for the same email AND the same preferred asset, the system blocks creation to prevent pipeline clutter. However, the same person CAN inquire about a different asset, and they CAN create a new lead after a previous one was Converted or Lost.
+
 ```python
 def validate(self):
     if self.email and not validate_email_address(self.email):
@@ -75,6 +81,8 @@ def validate(self):
 ### 2.3 Controller Logic — Conversion
 
 > **Requires**: 2.1 (lead schema), 3.1 (quotation schema must exist to create link)
+
+When a sales agent qualifies a lead and is ready to make a formal offer, they set the lead status to `Converted`. This triggers **automatic quotation creation** — a `Rental Quotation` document is created pre-populated with the lead's customer info and preferred asset. The `converted_to` field on the lead stores a link back to the quotation for audit trail. This automation saves the agent from manually re-entering customer details.
 
 ```python
 def on_update(self):
@@ -109,6 +117,8 @@ def _create_quotation(self):
 
 > **Requires**: D01-2.2 (DocType directory `rental_quotation/` must exist), D01-5.2 (role permissions)
 
+A **Rental Quotation** is a formal price offer for renting a specific asset. It includes the proposed rental rate (which can be negotiated — different from the listed rate), deposit amount, billing cycle (monthly/weekly/daily), and a validity period. Quotations can originate from a lead conversion (linked via `lead` field) or be created directly by an agent. Once submitted, the quotation is emailed to the customer as a PDF.
+
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `quotation_number` | Data | auto | Series: `RQ-.YYYY.-.####` |
@@ -139,6 +149,8 @@ def _create_quotation(self):
 
 > **Requires**: 3.1 (schema), D04 availability service (soft dependency — can stub initially)
 
+Before a quotation can be saved, the system checks two things: (1) the proposed asset must be **available** for the requested dates (not already Rented or Reserved), and (2) the `valid_until` date must be today or in the future (can't create an already-expired quotation). The availability check ties into D04's asset availability service.
+
 ```python
 def validate(self):
     if not is_asset_available(self.asset, self.proposed_start_date, self.proposed_end_date):
@@ -159,6 +171,8 @@ def validate(self):
 
 > **Requires**: 3.1 (schema), 3.2 (validation must pass)
 
+When a quotation is submitted (finalized by the agent), the system automatically **emails the quotation PDF** to the customer. This makes the offer official and starts the validity countdown. Email sending failures are logged but do NOT block the submission — the agent can always resend manually.
+
 ```python
 def on_submit(self):
     send_quotation_email(self)
@@ -175,6 +189,8 @@ def on_submit(self):
 ### 3.4 Quotation Expiry Scheduler
 
 > **Requires**: 3.1 (quotation schema with `valid_until` and `status` fields), D01-2.3 (`hooks.py` registers `expire_stale_quotations`)
+
+Quotations have a limited validity period (e.g., 7 or 14 days). This daily scheduler job finds all quotations in `Sent` status whose `valid_until` date has passed and automatically marks them as `Expired`. Draft quotations are not affected (they haven't been sent yet), and Accepted quotations are not affected (the customer already agreed). This prevents stale offers from lingering in the pipeline.
 
 ```python
 def expire_stale_quotations():
@@ -199,6 +215,8 @@ def expire_stale_quotations():
 ### 4.1 Guest Inquiry Endpoint
 
 > **Requires**: 2.1 (Rental Lead DocType must exist), D01-3.1 (`default_lead_assignee` field in config)
+
+This is the **public-facing API** that creates leads from website and app inquiry forms. It's `allow_guest=True` so unauthenticated visitors can submit inquiries. The endpoint is **rate-limited** (5 submissions per email per hour) to prevent spam. When a `default_lead_assignee` is configured in Rental Configuration, the lead is automatically assigned to that user for follow-up via Frappe's built-in assignment system.
 
 | Task | Detail |
 |---|---|
@@ -225,6 +243,8 @@ def expire_stale_quotations():
 
 > **Requires**: 2.1 (leads), 3.1 (quotations), D05 agreements (soft dependency — can count 0 initially)
 
+The **Lead Conversion Funnel** report gives management visibility into sales pipeline health. It groups leads by source channel (Web Form, Mobile App, Walk-In, Phone, Referral) and shows how many progressed through each stage: total leads → quotation generated → converted to agreement. The `conversion_rate_pct` column helps identify which channels produce the highest-quality leads. Access is restricted to Rental Manager and System Manager — agents and accountants cannot see aggregate pipeline data.
+
 | Item | Detail |
 |---|---|
 | File | `rental_core/report/lead_conversion_funnel/lead_conversion_funnel.py` |
@@ -248,6 +268,8 @@ def expire_stale_quotations():
 ### 6.1 Template Section
 
 > **Requires**: D01-7.3 (asset detail page stub must exist), D01-7.1 (CSS design system)
+
+The **inquiry form** is embedded at the bottom of every asset detail page (`/rentals/{asset}`). It lets website visitors ask questions about the property without creating an account. The form is intentionally simple — just name, email, phone (optional), and message — to minimize friction for casual browsers who aren't ready to commit to the booking flow.
 
 Add a "Request Info" collapsible form at the bottom of `/rentals/{asset}`:
 
@@ -277,6 +299,8 @@ Add a "Request Info" collapsible form at the bottom of `/rentals/{asset}`:
 ### 6.2 JS Handler
 
 > **Requires**: 6.1 (form HTML must exist), 4.1 (API endpoint must exist)
+
+The JavaScript handler captures the form submission, prevents the default browser POST, and sends the inquiry via `frappe.call()` (which auto-includes the CSRF token). On success, the entire form is replaced with a confirmation message — not just reset — to prevent accidental double-submission and give clear feedback.
 
 ```javascript
 document.getElementById('inquiry-form').addEventListener('submit', async (e) => {
@@ -309,6 +333,8 @@ document.getElementById('inquiry-form').addEventListener('submit', async (e) => 
 
 > **Requires**: 6.1 (form exists), D03 (KYC status check available — can stub initially)
 
+The call-to-action buttons on the asset detail page change based on the user's state. **Guests** see only "Request Info" (they can't book without an account). **Logged-in but non-KYC'd users** see "Request Info" as primary with a "Complete Verification" link nudging them toward KYC. **Fully verified users** see "Book Now" as the primary CTA with "Request Info" as a secondary option. This progressive CTA pattern drives users through the funnel without blocking casual browsing.
+
 - **Guests and non-KYC'd users**: Show "Request Info" as primary CTA on asset detail
 - **KYC-verified users**: Show "Book Now" as primary, "Request Info" as secondary
 
@@ -325,6 +351,8 @@ document.getElementById('inquiry-form').addEventListener('submit', async (e) => 
 ### 7.1 `InquiryFormWidget`
 
 > **Requires**: D01-8.6 (FrappeClient for API calls), D01-8.8 (auth state to pre-fill profile)
+
+The Flutter equivalent of the web inquiry form (6.1). It opens as a **bottom sheet** from the asset detail screen. When the user is logged in, the name and email fields are pre-filled from their profile (but remain editable in case they want to use a different email). The form validates email format client-side before sending, and shows a SnackBar confirmation on success.
 
 Bottom sheet on Asset Detail screen:
 
@@ -351,6 +379,8 @@ class InquiryFormWidget extends ConsumerStatefulWidget {
 ### 7.2 CTA Visibility on Asset Detail
 
 > **Requires**: 7.1 (inquiry widget), D03 (KYC status provider — can stub initially)
+
+The Flutter equivalent of the web CTA logic (6.3). The asset detail screen shows different buttons based on KYC status: verified users get a prominent "Book Now" button, while others get "Request Info" with a "Complete Verification" link. The CTA state is **reactive** — if the user completes KYC on another screen and navigates back, the buttons update automatically via the Riverpod provider.
 
 **Acceptance Criteria**:
 - [ ] If `kyc_status == Verified`: "Book Now" button is primary (prominent), "Request Info" is secondary

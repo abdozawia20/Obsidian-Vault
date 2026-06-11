@@ -10,7 +10,9 @@
 
 ## 1. Overview
 
-Management dashboards and automated reports: occupancy, revenue, overdue aging, ROI, legal case summary. Desk dashboards, Frappe Query Reports, Flutter chart widgets.
+This domain provides **management visibility** into the rental business. Operators need to know: How many assets are occupied? How much revenue came in this month? Which invoices are overdue and by how long? What's the ROI on each asset? How many leads are converting to actual bookings?
+
+The domain delivers this through **Frappe Script Reports** (data tables with filters), a **Desk Dashboard** (number cards and quick links), a **monthly automated email** summarizing key metrics, and **Flutter chart widgets** for the mobile experience. All reports respect role-based permissions — only Rental Managers and System Managers can access sensitive financial data.
 
 ---
 
@@ -19,6 +21,8 @@ Management dashboards and automated reports: occupancy, revenue, overdue aging, 
 ### 2.1 Occupancy Report
 
 > **Requires**: D04-2.1 (Rental Asset with `status`), D05-2.1 (Rental Agreement)
+
+The **occupancy report** answers the most basic landlord question: "How full are my assets?" It groups assets by type (Flat/Vehicle) and counts how many are Rented vs. Available vs. Maintenance. The occupancy rate is the key metric: `rented / total_active * 100`. Retired assets are excluded from the calculation (they're permanently out of service).
 
 | Item | Detail |
 |---|---|
@@ -52,6 +56,8 @@ def execute(filters=None):
 
 > **Requires**: ERPNext Sales Invoice, D05-2.1 (Rental Agreement for linking)
 
+The **revenue report** tracks financial performance over time: how much was invoiced, how much was actually collected, and what's still outstanding. Data is grouped by **month** within a date range, so operators can spot trends ("collection rate dropped in March"). Months with zero revenue still appear as rows (not omitted) to make gaps visible. The Accountant role has access to this report.
+
 | Item | Detail |
 |---|---|
 | File | `rental_core/report/revenue_report/revenue_report.py` |
@@ -76,6 +82,8 @@ def execute(filters=None):
 
 > **Requires**: ERPNext Sales Invoice, D06-3.1 (late fee tracking)
 
+The **overdue aging report** shows which invoices are unpaid and for how long. Invoices are bucketed into aging ranges: 0-15 days (warning), 15-30 days (concern), 30-60 days (serious), and 60+ days (critical/legal). This directly maps to the escalation tiers in D07 and helps the Rental Manager prioritize collection efforts. The report also shows whether a late fee has been applied, catching any invoices that slipped through.
+
 | Item | Detail |
 |---|---|
 | File | `rental_core/report/overdue_aging/overdue_aging.py` |
@@ -97,6 +105,8 @@ def execute(filters=None):
 ### 2.4 Asset ROI Report
 
 > **Requires**: D04-2.1 (`acquisition_cost` field), ERPNext Sales Invoice, D05-2.1 (agreement dates)
+
+The **ROI report** answers: "Is each asset profitable, and when will it pay for itself?" For each asset, it computes total revenue (all paid invoices), total expenses (maintenance + write-offs), net income, and ROI percentage. The `months_to_breakeven` metric tells the operator how long until the asset's acquisition cost is recovered at the current earnings rate. Assets without an `acquisition_cost` show "N/A" for ROI calculations.
 
 | Item | Detail |
 |---|---|
@@ -120,6 +130,8 @@ def execute(filters=None):
 
 > **Requires**: D07-4.2 (Legal Case DocType)
 
+A **litigation tracking report** that lists all Legal Case records created by the escalation engine (D07-4.1). It shows the customer, agreement, total outstanding amount, days open, and status. Sorted by `total_outstanding` descending so the highest-value cases are at the top. This report is restricted to Rental Managers and System Managers — Accountants cannot access it because Legal Case data is sensitive.
+
 | Item | Detail |
 |---|---|
 | File | `rental_core/report/legal_case_summary/legal_case_summary.py` |
@@ -139,6 +151,8 @@ def execute(filters=None):
 ### 2.6 Lead Conversion Funnel Report
 
 > **Requires**: D02-2.1 (Rental Lead), D02-3.1 (Rental Quotation), D05-2.1 (Rental Agreement)
+
+The **lead funnel report** tracks the sales pipeline: how many leads came in, how many converted to quotations, and how many ultimately became rental agreements. Data is grouped by **lead source** (Web Form, Mobile App, Walk-In, Phone, Referral) so the operator can see which channels are most effective. The conversion rate helps justify marketing spend and identify underperforming channels.
 
 | Item | Detail |
 |---|---|
@@ -163,6 +177,8 @@ def execute(filters=None):
 ### 3.1 Rental Manager Dashboard
 
 > **Requires**: 2.1–2.6 (all reports), D04-2.1 (asset counts), D06-4.1 (deposit data)
+
+A **Frappe Desk dashboard page** that provides an at-a-glance overview of the rental business. It uses **Number Cards** (large, colored count displays) for the most critical metrics: active agreements, overdue invoices, occupancy rate, pending KYC reviews, and open legal cases. Quick links below the cards let the manager jump directly to the relevant report for drill-down. The dashboard must load within 3 seconds even with 1000+ records.
 
 Dashboard page in Frappe Desk with Number Cards and Quick Links.
 
@@ -197,6 +213,8 @@ Dashboard page in Frappe Desk with Number Cards and Quick Links.
 
 > **Requires**: 2.1-2.6 (all reports), D01-2.3 (hooks.py monthly scheduler)
 
+An **automated monthly email** sent on the 1st of each month to all Rental Managers and System Managers. It summarizes the previous month's key metrics: occupancy summary, total revenue and collection rate, and overdue invoice count. The email uses a branded HTML template. This ensures management stays informed even if they don't regularly log in to the Desk dashboard.
+
 ```python
 def generate_monthly_report():
     occupancy = execute_occupancy_report({})
@@ -229,6 +247,8 @@ def generate_monthly_report():
 
 > **Requires**: D06-6.2 (Payment Webhook Log), D01-3.1 (`webhook_log_retention_months`)
 
+Webhook logs grow indefinitely if not cleaned up. This **monthly scheduler job** deletes `Payment Webhook Log` entries older than the configured retention period (default 13 months — just over a year, which satisfies most audit requirements). Even unprocessed (stale) logs are purged past retention because they're no longer actionable. The count of deleted logs is written to Frappe's error log for audit verification.
+
 ```python
 def purge_old_webhook_logs():
     config = frappe.get_single("Rental Configuration")
@@ -252,6 +272,8 @@ def purge_old_webhook_logs():
 
 > **Requires**: D01-8.6 (FrappeClient), 7.1-7.3 (API summary endpoints or custom dashboard API)
 
+A Riverpod provider that fetches **summary metrics** for the Flutter home screen: active agreement count, overdue invoice count, occupancy percentage, and next payment details. The data is cached (`keepAlive: true`) to prevent unnecessary re-fetches on navigation. Pull-to-refresh forces a cache invalidation.
+
 **Acceptance Criteria**:
 - [ ] Provider fetches summary data: active agreements count, overdue count, occupancy %, next payment
 - [ ] Data cached with `keepAlive: true`
@@ -262,6 +284,8 @@ def purge_old_webhook_logs():
 ### 6.2 Home Screen Dashboard Cards
 
 > **Requires**: 6.1 (dashboard provider), D01-8.3 (screen stubs)
+
+Three **tappable metric cards** on the Flutter home screen: "Active Rentals" (count), "Next Payment" (amount + due date), and "Overdue" (count with red warning styling). Each card navigates to the relevant detail screen when tapped. These give the customer (or staff on mobile) an instant financial snapshot.
 
 **Acceptance Criteria**:
 - [ ] "Active Rentals" card shows count
@@ -274,6 +298,8 @@ def purge_old_webhook_logs():
 ### 6.3 Revenue Chart Widget
 
 > **Requires**: D01-8.2 (`fl_chart` dependency), 6.1 (data provider)
+
+A **bar chart** showing the last 6 months of revenue data. Each month shows invoiced vs. received amounts (either side-by-side bars or stacked). This gives the manager a visual trend of collection performance over time. The widget handles loading states (shimmer skeleton) and empty states ("No revenue data yet").
 
 ```dart
 class RevenueChartWidget extends ConsumerWidget {
@@ -294,6 +320,8 @@ class RevenueChartWidget extends ConsumerWidget {
 
 > **Requires**: D01-8.2 (`fl_chart` dependency), 6.1
 
+A **donut/pie chart** visualizing the asset status distribution: Rented (green), Available (blue), Maintenance (orange), Retired (gray). The center of the donut shows the overall occupancy percentage. A legend below the chart labels each segment. This gives the manager a quick visual read on portfolio utilization.
+
 **Acceptance Criteria**:
 - [ ] Donut/pie chart shows: Rented vs Available vs Maintenance vs Retired
 - [ ] Each segment has distinct color from the theme
@@ -307,6 +335,8 @@ class RevenueChartWidget extends ConsumerWidget {
 ### 7.1 Report Navigation
 
 > **Requires**: D01-8.9 (GoRouter)
+
+The **deep link navigation** from dashboard cards to detail screens. Tapping a card doesn't just go to a generic screen — it navigates to the specific context: "Active Rentals" → My Rentals screen, "Overdue" → Invoices screen pre-filtered to overdue only, "Next Payment" → Payment screen for that specific invoice.
 
 **Acceptance Criteria**:
 - [ ] Tapping "Active Rentals" card → navigates to My Rentals screen
