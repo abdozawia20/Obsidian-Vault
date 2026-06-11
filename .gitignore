@@ -1,0 +1,35 @@
+# ── Obsidian device-specific state ──────────────────────────────────────────
+# These are machine-local UI files that differ per device and cause conflicts
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/graph.json
+.obsidian/backups/
+
+# ── Syncthing internals ──────────────────────────────────────────────────────
+.stversions/
+# Keep .stignore tracked so all devices share the same Syncthing ignore rules
+# Keep .stfolder tracked (it's just a tiny marker file)
+
+# ── Sync conflict files (resolve before committing) ──────────────────────────
+*.sync-conflict-*
+
+# ── Server output (written by parse_vault.py — not source content) ───────────
+.sync/
+
+# ── Large plugin asset bundles (compiled, can be reinstalled via Obsidian) ────
+.obsidian/plugins/obsidian-excalidraw-plugin/main.js
+.obsidian/plugins/time-garden-plugin/main.js
+.obsidian/themes/
+
+# ── macOS / Windows clutter ─────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+
+# ── Large binary/media files (keep in 40_Resources but don't bloat the repo) ─
+# Uncomment if needed:
+# *.mp4
+# *.mp3
+# Journal/06 Templates/Images/**

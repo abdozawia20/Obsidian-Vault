@@ -1,0 +1,16 @@
+// .stignore — Syncthing ignore patterns (place in vault root)
+// Device-specific Obsidian state — must NOT sync across devices
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+.obsidian/graph.json
+.obsidian/backups/
+
+// macOS / Windows system clutter
+.DS_Store
+Thumbs.db
+
+// Keep *.sync-conflict-* files visible so you can inspect and resolve them in Obsidian
+// Do NOT add *.sync-conflict-* here — you want to see them
+
+// Syncthing internal version store — no need to sync to other peers
+.stversions/

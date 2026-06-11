@@ -1,0 +1,159 @@
+{
+  "callouts": {
+    "custom": [
+      "journal",
+      "progress",
+      "pictures",
+      "highlights",
+      "ideas",
+      "logstwo",
+      "logsthree",
+      "logsfour",
+      "logsfive",
+      "logsone",
+      "logssix",
+      "logsseven"
+    ],
+    "settings": {
+      "journal": [
+        {
+          "changes": {
+            "icon": "lucide-eye"
+          }
+        },
+        {
+          "condition": {
+            "colorScheme": "light"
+          },
+          "changes": {
+            "color": "166, 189, 197"
+          }
+        },
+        {
+          "condition": {
+            "colorScheme": "dark"
+          },
+          "changes": {
+            "color": "166, 189, 197"
+          }
+        }
+      ],
+      "error": [
+        {
+          "changes": {
+            "icon": "lucide-goal",
+            "color": "208, 181, 48"
+          }
+        }
+      ],
+      "progress": [
+        {
+          "changes": {
+            "icon": "lucide-goal",
+            "color": "208, 181, 48"
+          }
+        }
+      ],
+      "pictures": [
+        {
+          "changes": {
+            "icon": "lucide-images"
+          }
+        },
+        {
+          "condition": {
+            "colorScheme": "light"
+          },
+          "changes": {
+            "color": "68, 207, 110"
+          }
+        },
+        {
+          "condition": {
+            "colorScheme": "dark"
+          },
+          "changes": {
+            "color": "68, 207, 110"
+          }
+        }
+      ],
+      "highlights": [
+        {
+          "changes": {
+            "icon": "lucide-sparkles",
+            "color": "168, 130, 255"
+          }
+        }
+      ],
+      "ideas": [
+        {
+          "changes": {
+            "icon": "lucide-lightbulb",
+            "color": "83, 223, 221"
+          }
+        }
+      ],
+      "logstwo": [
+        {
+          "changes": {
+            "icon": "lucide-sparkles",
+            "color": "233, 151, 63"
+          }
+        }
+      ],
+      "logsthree": [
+        {
+          "changes": {
+            "icon": "lucide-star",
+            "color": "208, 181, 48"
+          }
+        }
+      ],
+      "logsfour": [
+        {
+          "changes": {
+            "icon": "lucide-flower",
+            "color": "0, 255, 76"
+          }
+        }
+      ],
+      "logsfive": [
+        {
+          "changes": {
+            "icon": "lucide-flower-2",
+            "color": "83, 223, 221"
+          }
+        }
+      ],
+      "logsone": [
+        {
+          "changes": {
+            "icon": "lucide-sparkle",
+            "color": "251, 70, 76"
+          }
+        }
+      ],
+      "logssix": [
+        {
+          "changes": {
+            "icon": "lucide-flame",
+            "color": "139, 179, 193"
+          }
+        }
+      ],
+      "logsseven": [
+        {
+          "changes": {
+            "icon": "lucide-sun",
+            "color": "168, 130, 255"
+          }
+        }
+      ]
+    }
+  },
+  "calloutDetection": {
+    "obsidian": true,
+    "theme": true,
+    "snippet": true
+  }
+}

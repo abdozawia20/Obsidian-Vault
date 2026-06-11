@@ -1,0 +1,166 @@
+/*------------------------------------------------------------------------------
+                     Quarterly Note Themes for Time Garden
+------------------------------------------------------------------------------*/
+:root {
+  --highlight: #ffffff;
+  --primary: #aaaaaa;
+  --dark: #333333;
+}
+
+.quarterly {
+  --dark: var(--dark);
+  --text-normal: var(--highlight);
+  --text-muted: var(--highlight);
+  --text-faint: var(--highlight);
+  --checklist-done-color: var(--highlight);
+  --metadata-label-text-color: var(--highlight);
+  --metadata-input-text-color: var(--highlight);
+  --hr-color: var(--primary);
+  --blockquote-border-color: var(--primary);
+  --interactive-accent: var(--primary);
+  --collapse-icon-color-collapsed: var(--primary);
+  --checkbox-color: var(--primary);
+  --checkbox-marker-color: var(--dark);
+  --checkbox-color-hover: var(--highlight);
+  --checkbox-border-color: var(--highlight);
+  --list-marker-color: var(--highlight);
+  --code-background: black;
+  --code-normal: var(--primary); 
+  --background-modifier-border-focus: var(--primary);
+  --background-modifier-border: color-mix(in srgb, var(--highlight) 60%, transparent);
+  --background-modifier-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+  --pill-cover-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+}
+
+/* Q1 - Winter to Spring - Cool blues transitioning to greens */
+.quarter-1 {
+  --highlight: #c7e0f0;
+  --primary: #6a9cb8;
+  --dark: #2a4050;
+}
+
+/* Q2 - Spring to Summer - Greens transitioning to warm yellows */
+.quarter-2 {
+  --highlight: #f0f7c7;
+  --primary: #a8c265;
+  --dark: #4d5830;
+}
+
+/* Q3 - Summer to Fall - Warm yellows transitioning to oranges */
+.quarter-3 {
+  --highlight: #ffd8a8;
+  --primary: #e69a5c;
+  --dark: #664530;
+}
+
+/* Q4 - Fall to Winter - Deep oranges transitioning to cool purples */
+.quarter-4 {
+  --highlight: #e0c7d8;
+  --primary: #9a6c8c;
+  --dark: #432e3d;
+}
+
+.quarterly :is(h1, .HyperMD-header.HyperMD-header-1) {
+  color: var(--primary);
+  font-size: 58px;
+  padding: 0 !important;
+}
+
+.quarterly :is(h2, .HyperMD-header.HyperMD-header-2) {
+  color: var(--highlight);
+  font-size: 38px;
+  font-style: italic;
+  padding: 0 !important;
+}
+
+.quarterly :is(h3, .HyperMD-header.HyperMD-header-3) {
+  color: var(--primary); 
+  font-size: 40px;
+  padding-top: 0;
+}
+
+.quarterly :is(h4, .HyperMD-header.HyperMD-header-4) {
+  background-color: var(--primary);
+  color: var(--dark);
+  font-weight: 900;
+  margin-bottom: 0;
+  padding-top: 0;
+  font-size: 24px;
+  width: fit-content;
+  padding-left: 10px;
+  padding-right: 10px;
+  border-radius: 8px;
+  word-wrap: normal;
+}
+
+.quarterly p {
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+
+.quarterly :is(a:link, .cm-hmd-internal-link) {
+  color: var(--primary);
+}
+
+.quarterly :is(a:hover, .cm-hmd-internal-link:hover) {
+  color: var(--highlight);
+}
+
+.quarterly hr {
+  margin-top: 28px !important;
+  margin-bottom: 28px !important;
+}
+
+.quarterly img {
+  display: block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+:is(.quarter-1, .quarter-2, .quarter-3, .quarter-4) svg {
+  color: color-mix(in srgb, var(--highlight) 60%, transparent);
+}
+
+/* Target the custom class */
+.custom-progress-bar {
+  color: white;
+  background-color: rgb(from var(--primary) r g b / 0.2);
+  border-radius: 5px;
+}
+
+.quarterly-summary-container {
+  background-color: color-mix(in srgb, var(--primary) 15%, transparent);
+  border-radius: 10px;
+  padding: 15px;
+  margin-top: 15px;
+  margin-bottom: 15px;
+}
+
+.quarterly-metrics {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.quarterly-metric-card {
+  background-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: 10px;
+  padding: 12px;
+  flex: 1;
+  min-width: 180px;
+  text-align: center;
+}
+
+.quarterly-metric-value {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--highlight);
+}
+
+.quarterly-metric-label {
+  font-size: 16px;
+  color: var(--highlight);
+  opacity: 0.8;
+}

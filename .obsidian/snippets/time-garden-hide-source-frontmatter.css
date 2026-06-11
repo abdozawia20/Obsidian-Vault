@@ -1,0 +1,93 @@
+/* hides the source frontmatter within all time garden notes */
+
+/* DAILY NOTES */
+.timegarden-daily .cm-foldButton {
+  display: none !important;
+}
+
+.timegarden-daily span.cm-hmd-frontmatter,
+.timegarden-daily div.cm-line:nth-of-type(1) {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  font-size: 0 !important;
+}
+
+.timegarden-daily div.cm-line:nth-of-type(2) {
+  font-size: 0 !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  line-height: 0 !important;
+  height: auto !important;
+}
+
+.timegarden-daily div.cm-line:nth-of-type(3) {
+  font-size: 0 !important;
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+  line-height: 0 !important;
+  height: auto !important;
+}
+
+/* WEEKLY NOTES */
+.timegarden-weekly .cm-foldButton {
+  display: none !important;
+}
+
+.timegarden-weekly span.cm-hmd-frontmatter,
+.timegarden-weekly div.cm-line:nth-of-type(-n+9) {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  font-size: 0 !important;
+  height: 0 !important;
+}
+
+/* MONTHLY NOTES */
+.timegarden-monthly .cm-foldButton {
+  display: none !important;
+}
+
+.timegarden-monthly span.cm-hmd-frontmatter,
+.timegarden-monthly div.cm-line:nth-of-type(-n+4) {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  font-size: 0 !important;
+}
+
+/* QUARTERLY NOTES */
+.timegarden-quarterly .cm-foldButton {
+  display: none !important;
+}
+
+.timegarden-quarterly span.cm-hmd-frontmatter,
+.timegarden-quarterly div.cm-line:nth-of-type(-n+4) {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  font-size: 0 !important;
+}
+
+/* YEARLY NOTES */
+.timegarden-yearly .cm-foldButton {
+  display: none !important;
+}
+
+.timegarden-yearly span.cm-hmd-frontmatter,
+.timegarden-yearly div.cm-line:nth-of-type(-n+4) {
+  display: none !important;
+  height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  line-height: 0 !important;
+  font-size: 0 !important;
+}

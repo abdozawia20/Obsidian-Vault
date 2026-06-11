@@ -1,0 +1,336 @@
+
+/* General Tweaks, partially by CyanVoxel */
+
+/* Aggressive Subtle Professional Tags - Obsidian CSS Snippet */
+
+/* Base styling for all tags - Reading View */
+a.tag,
+.tag-pane-tag,
+.tag-container .tag,
+span.tag {
+  /* Remove background and borders */
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  
+  /* Subtle text styling */
+  color: var(--text-muted) !important;
+  opacity: 0.6 !important;
+  font-size: 0.85em !important;
+  font-weight: normal !important;
+  font-style: italic !important;
+  
+  /* Remove padding and adjust spacing */
+  padding: 0 2px !important;
+  margin: 0 1px !important;
+  
+  /* Subtle bottom border instead of background */
+  border-bottom: 1px dotted var(--text-faint) !important;
+  
+  /* Smooth transition for hover effect */
+  transition: all 0.2s ease !important;
+}
+
+/* Base styling for all tags - Editing View */
+.cm-hashtag,
+.HyperMD-hashtag,
+.cm-s-obsidian .cm-hashtag {
+  /* Remove background and borders */
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  
+  /* Subtle text styling */
+  color: var(--text-muted) !important;
+  opacity: 0.6 !important;
+  font-size: 0.85em !important;
+  font-weight: normal !important;
+  font-style: italic !important;
+  
+  /* Remove padding and adjust spacing */
+  padding: 0 2px !important;
+  margin: 0 1px !important;
+  
+  /* Subtle bottom border instead of background */
+  border-bottom: 1px dotted var(--text-faint) !important;
+  
+  /* Smooth transition for hover effect */
+  transition: all 0.2s ease !important;
+}
+
+/* Hover state - increase visibility - Reading View */
+a.tag:hover,
+.tag-pane-tag:hover,
+.tag-container .tag:hover,
+span.tag:hover {
+  opacity: 1 !important;
+  color: var(--text-accent) !important;
+  border-bottom: 1px solid var(--text-accent) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Hover state - increase visibility - Editing View */
+.cm-hashtag:hover,
+.HyperMD-hashtag:hover,
+.cm-s-obsidian .cm-hashtag:hover {
+  opacity: 1 !important;
+  color: var(--text-accent) !important;
+  border-bottom: 1px solid var(--text-accent) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Tags in properties panel */
+.metadata-property[data-property-key="tags"] .multi-select-pill,
+.frontmatter-container .tag {
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  opacity: 0.7 !important;
+  color: var(--text-muted) !important;
+  border-bottom: 1px dotted var(--text-faint) !important;
+  padding: 0 2px !important;
+  font-style: italic !important;
+  transition: all 0.2s ease !important;
+}
+
+.metadata-property[data-property-key="tags"] .multi-select-pill:hover,
+.frontmatter-container .tag:hover {
+  opacity: 1 !important;
+  color: var(--text-accent) !important;
+  border-bottom: 1px solid var(--text-accent) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Hash symbol styling - slightly more subtle than the tag text */
+a.tag::before,
+span.tag::before {
+  opacity: 0.5 !important;
+  font-size: 0.9em !important;
+}
+
+/* Hash symbol in editing view */
+.cm-hashtag-begin::before {
+  opacity: 0.5 !important;
+  font-size: 0.9em !important;
+}
+
+/* Specific targeting for Live Preview mode */
+.markdown-source-view.mod-cm6 .cm-hashtag {
+  background-color: transparent !important;
+  color: var(--text-muted) !important;
+  opacity: 0.6 !important;
+  border-bottom: 1px dotted var(--text-faint) !important;
+  border-radius: 0 !important;
+  transition: all 0.2s ease !important;
+}
+
+.markdown-source-view.mod-cm6 .cm-hashtag:hover {
+  opacity: 1 !important;
+  color: var(--text-accent) !important;
+  border-bottom: 1px solid var(--text-accent) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* Additional targeting for Source mode */
+.markdown-source-view.mod-cm6 .cm-line .cm-hashtag {
+  background-color: transparent !important;
+  color: var(--text-muted) !important;
+  opacity: 0.6 !important;
+  border-bottom: 1px dotted var(--text-faint) !important;
+  border-radius: 0 !important;
+  transition: all 0.2s ease !important;
+}
+
+.markdown-source-view.mod-cm6 .cm-line .cm-hashtag:hover {
+  opacity: 1 !important;
+  color: var(--text-accent) !important;
+  border-bottom: 1px solid var(--text-accent) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* for callouts */
+
+/* Subtle Adaptive Callouts - Obsidian CSS Snippet */
+
+/* Base styling for all callouts */
+.callout {
+  border: none !important;
+  border-left: 2px solid !important;
+  border-radius: 0 !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  transition: all 0.2s ease !important;
+}
+
+/* Callout title styling */
+.callout .callout-title {
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  color: var(--text-muted) !important;
+  font-style: italic !important;
+  padding: 0 12px !important;
+}
+
+/* Callout content styling */
+.callout .callout-content {
+  background-color: transparent !important;
+  border: none !important;
+  color: var(--text-normal) !important;
+  padding: 0 12px !important;
+}
+
+/* Callout icon styling */
+.callout .callout-icon {
+  color: var(--text-muted) !important;
+  opacity: 0.7 !important;
+}
+
+.callout {
+  border-left: 0 !important;
+}
+
+/* Hover effects */
+.callout:hover {
+  border-left-width: 3px !important;
+}
+
+.callout:hover .callout-title {
+  color: var(--text-normal) !important;
+}
+
+.callout:hover .callout-icon {
+  opacity: 1 !important;
+  color: var(--text-accent) !important;
+}
+
+/* Specific callout types - inherit from theme colors */
+.callout[data-callout="note"] {
+  border-left-color: var(--text-muted) !important;
+}
+
+.callout[data-callout="tip"],
+.callout[data-callout="hint"],
+.callout[data-callout="important"] {
+  border-left-color: var(--text-accent) !important;
+}
+
+.callout[data-callout="warning"],
+.callout[data-callout="caution"] {
+  border-left-color: var(--text-warning) !important;
+}
+
+.callout[data-callout="danger"],
+.callout[data-callout="error"] {
+  border-left-color: var(--text-error) !important;
+}
+
+/* For dark theme specific adjustments */
+.theme-dark .callout .callout-content {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+/* For light theme specific adjustments */
+.theme-light .callout .callout-content {
+  background-color: rgba(0, 0, 0, 0.02) !important;
+}
+
+/* general stuff */
+
+.theme-light,
+.theme-dark {
+  --link-decoration: none;
+}
+
+h1 {
+  margin-top: 20px !important;
+}
+
+hr {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.image-borders img {
+  border: solid;
+  /* border-width: 1em; */
+  border-width: 2px;
+  /* border-radius: 6px; */
+  border-color: rgba(122, 122, 122, 0.2);
+}
+
+.image-small img {
+  border: solid;
+  /* border-width: 1em; */
+  border-width: 2px;
+  /* border-radius: 6px; */
+  border-color: rgba(122, 122, 122, 0.2);
+  width: 50%;
+}
+
+.markdown-preview-view img {
+  max-width: 100%;
+}
+
+img {
+  max-width: 100%;
+  border-radius: 6px;
+  display: flex;
+  justify-self: center;
+}
+
+.callout {
+  border-radius: 12px;
+  border-width: 2px;
+}
+
+.task-list-item-checkbox {
+  border-width: 2px;
+}
+
+#calendar-container .title {
+  font-size: 18px;
+}
+
+.center-images img {
+  display: block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.no-embed-border {
+  --embed-border-left: 0px solid black !important;
+}
+
+/* .markdown-preview-view */
+.markdown-preview-view {
+  border-radius: 6px;
+}
+
+.center-titles
+  :is(
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    .HyperMD-header.HyperMD-header-1,
+    .HyperMD-header.HyperMD-header-2,
+    .HyperMD-header.HyperMD-header-3,
+    .HyperMD-header.HyperMD-header-4,
+    .HyperMD-header.HyperMD-header-5,
+    .HyperMD-header.HyperMD-header-6
+  ) {
+  text-align: center;
+}
+
+code {
+  font-family: "JetBrainsMono Nerd Font Mono", monospace;
+}
+
+.dashboard h1{
+  color: white;
+}

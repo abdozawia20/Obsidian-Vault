@@ -1,0 +1,18 @@
+{
+  "theme": "obsidian",
+  "enabledCssSnippets": [
+    "time-garden-daily-note-themes",
+    "time-garden-misc-styles",
+    "time-garden-monthly-note-themes",
+    "time-garden-quarterly-note-themes",
+    "time-garden-yearly-note-themes",
+    "time-garden-weekly-note-themes",
+    "time-garden-tweaks",
+    "time-garden-colored-sidebar",
+    "time-garden-hide-inline-title",
+    "time-garden-hide-visible-frontmatter"
+  ],
+  "baseFontSize": 16,
+  "cssTheme": "",
+  "accentColor": "#099f36"
+}

@@ -1,0 +1,64 @@
+{
+  "confirmDeletion": true,
+  "showAddCommand": false,
+  "debug": false,
+  "editorMenu": [],
+  "fileMenu": [],
+  "leftRibbon": [
+    {
+      "id": "journals:open-calendar",
+      "icon": "lucide-calendar",
+      "name": "Journals: Open calendar",
+      "mode": "any",
+      "color": "#000000"
+    },
+    {
+      "id": "journals::open-daily-note",
+      "icon": "lucide-calendar-days",
+      "name": "Open daily note",
+      "mode": "any",
+      "color": "#0eaa18"
+    },
+    {
+      "id": "time-garden-plugin:reset-welcome-popup",
+      "icon": "lucide-timer-reset",
+      "name": "Time Garden Plugin: Reset Welcome Experience",
+      "mode": "any"
+    },
+    {
+      "id": "time-garden-plugin:open-plugin-settings",
+      "icon": "lucide-settings",
+      "name": "Time Garden Plugin: Open Time Garden Settings",
+      "mode": "any"
+    }
+  ],
+  "rightRibbon": [],
+  "titleBar": [],
+  "statusBar": [],
+  "pageHeader": [],
+  "macros": [],
+  "explorer": [],
+  "hide": {
+    "statusbar": [
+      "js-engine"
+    ],
+    "leftRibbon": [
+      "🚩 Pixel Banner Menu",
+      "Templater",
+      "Insert Callout",
+      "Open rulebook",
+      "BRAT"
+    ]
+  },
+  "spacing": "20",
+  "advancedToolbar": {
+    "rowHeight": 48,
+    "rowCount": 1,
+    "spacing": 0,
+    "buttonWidth": 48,
+    "columnLayout": false,
+    "mappedIcons": [],
+    "tooltips": false,
+    "heightOffset": 0
+  }
+}

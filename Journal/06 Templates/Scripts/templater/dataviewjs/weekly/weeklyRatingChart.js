@@ -1,0 +1,1 @@
+window.timeGarden.charts.weeklyRatingChart(dv, input.container, input);

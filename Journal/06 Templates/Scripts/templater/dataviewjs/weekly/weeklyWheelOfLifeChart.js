@@ -1,0 +1,1 @@
+window.timeGarden.charts.weeklyWheelOfLifeChart(dv, input.container, input);

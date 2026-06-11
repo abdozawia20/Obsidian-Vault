@@ -1,0 +1,38 @@
+[Unit]
+Description=Obsidian Vault Syncthing Watcher
+Documentation=file:///srv/vault/Meta/syncthing_watcher.py
+After=network.target syncthing@%i.service
+Requires=syncthing@%i.service
+
+[Service]
+Type=simple
+User=%i
+Environment="SYNCTHING_API_KEY=REPLACE_WITH_YOUR_API_KEY"
+Environment="SYNCTHING_URL=http://127.0.0.1:8384"
+Environment="SYNCTHING_FOLDER_ID=obsidian-vault"
+ExecStart=/usr/bin/python3 /srv/vault-scripts/syncthing_watcher.py
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
+# ── Deploy instructions ───────────────────────────────────────────────────────
+# 1. Copy scripts to server:
+#    scp Meta/parse_vault.py Meta/syncthing_watcher.py user@server:/srv/vault-scripts/
+#
+# 2. Copy this service file:
+#    sudo cp Meta/vault-watcher.service /etc/systemd/system/vault-watcher@ubuntu.service
+#
+# 3. Set your API key in the service file (replace REPLACE_WITH_YOUR_API_KEY):
+#    sudo systemctl edit vault-watcher@ubuntu
+#
+# 4. Enable and start:
+#    sudo systemctl daemon-reload
+#    sudo systemctl enable vault-watcher@ubuntu
+#    sudo systemctl start vault-watcher@ubuntu
+#
+# 5. Check logs:
+#    sudo journalctl -u vault-watcher@ubuntu -f

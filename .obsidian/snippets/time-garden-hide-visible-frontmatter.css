@@ -1,0 +1,41 @@
+/* hides the visible frontmatter within all time garden notes */
+
+/* DAILY NOTES */
+.timegarden-daily .metadata-container {
+    display: none;
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+}
+
+/* WEEKLY NOTES */
+.timegarden-weekly .metadata-container {
+    display: none;
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+}
+
+/* MONTHLY NOTES */
+.timegarden-monthly .metadata-container {
+    display: none;
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+}
+
+/* QUARTERLY NOTES */
+.timegarden-quarterly .metadata-container {
+    display: none;
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+}
+
+/* YEARLY NOTES */
+.timegarden-yearly .metadata-container {
+    display: none;
+    visibility: hidden;
+    opacity: 0;
+    position: absolute;
+}

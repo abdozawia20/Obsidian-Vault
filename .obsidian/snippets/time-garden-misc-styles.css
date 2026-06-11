@@ -1,0 +1,66 @@
+progress::-webkit-progress-value {
+    background: var(--interactive-accent);
+  }
+
+/* for metabind */
+
+/* Style the input container */
+.custom-input {
+  width: 100%;
+  margin: 10px 0;
+}
+
+/* Style the input field */
+.custom-input input {
+  background-color: var(--background-primary);
+  border: 1px solid var(--interactive-accent);
+  border-radius: 4px;
+  padding: 8px;
+  width: 100%;
+  font-size: 0.9rem;
+  height: 2rem;
+}
+
+/* Style the input on focus */
+.custom-input input:focus {
+  outline: none;
+  border-color: var(--interactive-accent-hover);
+  box-shadow: 0 0 3px var(--interactive-accent);
+}
+
+/* Style the label if present */
+.custom-input .meta-bind-label {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+/* all summary fields have white text even in reading view*/
+
+.custom-editor {
+  padding-bottom: 0px !important;
+  margin-bottom: 0px;
+  color: #dadada !important;
+}
+
+/* style for centering metabind buttons*/
+
+.centered-button {
+  display: block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  width: fit-content !important;
+}
+
+@media (max-width: 600px) {
+  /* Target the span with your custom class */
+  .phone-responsive {
+    font-size: 70% !important;
+  }
+  /* Target the button inside the span */
+  .phone-responsive button {
+    font-size: 70% !important;
+    padding-left: 5px !important;
+    padding-right: 5px !important;
+    /* Optionally scale width/height if needed */
+  }
+}

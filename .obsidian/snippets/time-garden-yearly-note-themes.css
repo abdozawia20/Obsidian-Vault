@@ -1,0 +1,188 @@
+/*------------------------------------------------------------------------------
+                     Yearly Note Themes for Time Garden
+                    Elegant gradient styling for yearly overviews
+------------------------------------------------------------------------------*/
+:root {
+  --highlight: #ffffff;
+  --primary: #aaaaaa;
+  --dark: #333333;
+}
+
+.yearly {
+  --dark: var(--dark);
+  --text-normal: var(--highlight);
+  --text-muted: var(--highlight);
+  --text-faint: var(--highlight);
+  --checklist-done-color: var(--highlight);
+  --metadata-label-text-color: var(--highlight);
+  --metadata-input-text-color: var(--highlight);
+  --hr-color: var(--primary);
+  --blockquote-border-color: var(--primary);
+  --interactive-accent: var(--primary);
+  --collapse-icon-color-collapsed: var(--primary);
+  --checkbox-color: var(--primary);
+  --checkbox-marker-color: var(--dark);
+  --checkbox-color-hover: var(--highlight);
+  --checkbox-border-color: var(--highlight);
+  --list-marker-color: var(--highlight);
+  --code-background: black;
+  --code-normal: var(--primary); 
+  --background-modifier-border-focus: var(--primary);
+  --background-modifier-border: color-mix(in srgb, var(--highlight) 60%, transparent);
+  --background-modifier-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+  --pill-cover-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+}
+
+/* Yearly theme colors */
+.yearly {
+  --highlight: #e0f7ff;
+  --primary: #8ca9d3;
+  --dark: #2d4159;
+}
+
+/* Gradient header styling */
+.yearly .cm-s-obsidian .cm-header-1, 
+.yearly .markdown-rendered h1 {
+  background: linear-gradient(135deg, #74ebd5, #ACB6E5);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  background-clip: text;
+  width: fit-content;
+  font-size: 64px;
+  text-align: center;
+  margin: 10px auto;
+  padding: 10px 0 !important;
+}
+
+/* Style for star symbol */
+.yearly .markdown-rendered h1:has(em) {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+}
+
+.yearly .cm-formatting-header-1:has-text("✧"),
+.yearly .markdown-rendered h1:first-child:before {
+  content: "✧";
+  background: linear-gradient(135deg, #f857a6, #ff5858);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  background-clip: text;
+  font-size: 60px;
+  margin-right: 15px;
+}
+
+/* Style for year number in italics */
+.yearly .cm-em,
+.yearly .markdown-rendered h1 em {
+  background: linear-gradient(135deg, #2b5876, #4e4376);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  background-clip: text;
+  font-style: normal;
+  font-weight: 900;
+}
+
+/* Regular header styling */
+.yearly :is(h2, .HyperMD-header.HyperMD-header-2) {
+  color: var(--highlight);
+  font-size: 42px;
+  font-style: italic;
+  padding: 0 !important;
+}
+
+.yearly :is(h3, .HyperMD-header.HyperMD-header-3) {
+  color: var(--primary); 
+  font-size: 44px;
+  padding-top: 0;
+}
+
+.yearly :is(h4, .HyperMD-header.HyperMD-header-4) {
+  background-color: var(--primary);
+  color: var(--dark);
+  font-weight: 900;
+  margin-bottom: 0;
+  padding-top: 0;
+  font-size: 26px;
+  width: fit-content;
+  padding-left: 12px;
+  padding-right: 12px;
+  border-radius: 8px;
+  word-wrap: normal;
+}
+
+.yearly p {
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.yearly :is(a:link, .cm-hmd-internal-link) {
+  color: var(--primary);
+}
+
+.yearly :is(a:hover, .cm-hmd-internal-link:hover) {
+  color: var(--highlight);
+}
+
+.yearly hr {
+  margin-top: 32px !important;
+  margin-bottom: 32px !important;
+}
+
+.yearly img {
+  display: block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+.yearly svg {
+  color: color-mix(in srgb, var(--highlight) 60%, transparent);
+}
+
+/* Target the custom class */
+.custom-progress-bar {
+  color: white;
+  background-color: rgb(from var(--primary) r g b / 0.2);
+  border-radius: 5px;
+}
+
+.yearly-summary-container {
+  background-color: color-mix(in srgb, var(--primary) 15%, transparent);
+  border-radius: 12px;
+  padding: 18px;
+  margin-top: 18px;
+  margin-bottom: 18px;
+}
+
+.yearly-metrics {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin: 20px 0;
+}
+
+.yearly-metric-card {
+  background-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: 12px;
+  padding: 15px;
+  flex: 1;
+  min-width: 200px;
+  text-align: center;
+}
+
+.yearly-metric-value {
+  font-size: 32px;
+  font-weight: bold;
+  color: var(--highlight);
+}
+
+.yearly-metric-label {
+  font-size: 18px;
+  color: var(--highlight);
+  opacity: 0.8;
+}

@@ -1,0 +1,1 @@
+window.timeGarden.charts.yearlyWheelOfLifeChart(dv, input.container, input);

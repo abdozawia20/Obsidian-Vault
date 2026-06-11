@@ -1,0 +1,1 @@
+module.exports = window.timeGarden.services.alias;

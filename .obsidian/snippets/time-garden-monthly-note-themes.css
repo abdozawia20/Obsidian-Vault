@@ -1,0 +1,213 @@
+/*------------------------------------------------------------------------------
+                     Monthly Note Themes for Time Garden
+------------------------------------------------------------------------------*/
+:root {
+    --highlight: #ffffff;
+    --primary: #aaaaaa;
+    --dark: #333333;
+  }
+  
+  .monthly {
+    --dark: var(--dark);
+    --text-normal: var(--highlight);
+    --text-muted: var(--highlight);
+    --text-faint: var(--highlight);
+    --checklist-done-color: var(--highlight);
+    --metadata-label-text-color: var(--highlight);
+    --metadata-input-text-color: var(--highlight);
+    --hr-color: var(--primary);
+    --blockquote-border-color: var(--primary);
+    --interactive-accent: var(--primary);
+    --collapse-icon-color-collapsed: var(--primary);
+    --checkbox-color: var(--primary);
+    --checkbox-marker-color: var(--dark);
+    --checkbox-color-hover: var(--highlight);
+    --checkbox-border-color: var(--highlight);
+    --list-marker-color: var(--highlight);
+    --code-background: black;
+    --code-normal: var(--primary); 
+    --background-modifier-border-focus: var(--primary);
+    --background-modifier-border: color-mix(in srgb, var(--highlight) 60%, transparent);
+    --background-modifier-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+    --pill-cover-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+  }
+  
+  /* Winter months - Cool blues and purples */
+  .january, .January {
+    --highlight: #b9e8ff;
+    --primary: #5294c4;
+    --dark: #1c3b55;
+  }
+  
+  .february, .February {
+    --highlight: #d9c2ff;
+    --primary: #8a5dc7;
+    --dark: #36265a;
+  }
+  
+  .march, .March {
+    --highlight: #c7f0d8;
+    --primary: #5fb485;
+    --dark: #2a523d;
+  }
+  
+  /* Spring months - Greens and soft yellows */
+  .april, .April {
+    --highlight: #e8ffc7;
+    --primary: #8abd57;
+    --dark: #3c552a;
+  }
+  
+  .may, .May {
+    --highlight: #fff9c7;
+    --primary: #dbc458;
+    --dark: #635a2a;
+  }
+  
+  .june, .June {
+    --highlight: #ffe0c7;
+    --primary: #e09d58;
+    --dark: #654a2a;
+  }
+  
+  /* Summer months - Yellows, oranges and reds */
+  .july, .July {
+    --highlight: #ffc7c7;
+    --primary: #e05858;
+    --dark: #652a2a;
+  }
+  
+  .august, .August {
+    --highlight: #ffb38a;
+    --primary: #f07542;
+    --dark: #6b3420;
+  }
+  
+  .september, .September {
+    --highlight: #ffd68a;
+    --primary: #e9a643;
+    --dark: #664a1e;
+  }
+  
+  /* Fall months - Oranges, reds, and purples */
+  .october, .October {
+    --highlight: #ffad9e;
+    --primary: #d1614b;
+    --dark: #5e2c22;
+  }
+  
+  .november, .November {
+    --highlight: #e6b3cc;
+    --primary: #ad5985;
+    --dark: #4c273b;
+  }
+  
+  .december, .December {
+    --highlight: #b3c6e6;
+    --primary: #5978ad;
+    --dark: #27344c;
+  }
+  
+  .monthly :is(h1, .HyperMD-header.HyperMD-header-1) {
+    color: var(--primary);
+    font-size: 52px;
+    padding: 0 !important;
+  }
+  
+  .monthly :is(h2, .HyperMD-header.HyperMD-header-2) {
+    color: var(--highlight);
+    font-size: 34px;
+    font-style: italic;
+    padding: 0 !important;
+  }
+  
+  .monthly :is(h3, .HyperMD-header.HyperMD-header-3) {
+    color: var(--primary); 
+    font-size: 36px;
+    padding-top: 0;
+  }
+  
+  .monthly :is(h4, .HyperMD-header.HyperMD-header-4) {
+    color: var(--primary);
+    margin-bottom: 0;
+    padding-top: 0;
+    font-size: 30px;
+    width: fit-content;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  
+  .monthly p {
+    margin-top: 6px;
+    margin-bottom: 6px;
+  }
+  
+  .monthly :is(a:link, .cm-hmd-internal-link) {
+    color: var(--primary);
+  }
+  
+  .monthly :is(a:hover, .cm-hmd-internal-link:hover) {
+    color: var(--highlight);
+  }
+  
+  .monthly hr {
+    margin-top: 24px !important;
+    margin-bottom: 24px !important;
+  }
+  
+  .monthly img {
+    display: block !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+  }
+  
+  :is(.january, .January, .february, .February, .march, .March, 
+      .april, .April, .may, .May, .june, .June,
+      .july, .July, .august, .August, .september, .September,
+      .october, .October, .november, .November, .december, .December) svg {
+    color: color-mix(in srgb, var(--highlight) 60%, transparent);
+  }
+  
+  /* Target the custom class */
+  .custom-progress-bar {
+    color: white;
+    background-color: rgb(from var(--primary) r g b / 0.2);
+    border-radius: 5px;
+  }
+  
+  .monthly-summary-container {
+    background-color: color-mix(in srgb, var(--primary) 15%, transparent);
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 12px;
+    margin-bottom: 12px;
+  }
+  
+  .monthly-metrics {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 15px 0;
+  }
+  
+  .monthly-metric-card {
+    background-color: color-mix(in srgb, var(--primary) 30%, transparent);
+    border-radius: 8px;
+    padding: 10px;
+    flex: 1;
+    min-width: 150px;
+    text-align: center;
+  }
+  
+  .monthly-metric-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--highlight);
+  }
+  
+  .monthly-metric-label {
+    font-size: 14px;
+    color: var(--highlight);
+    opacity: 0.8;
+  }

@@ -1,0 +1,1 @@
+**Chart Type:** `INPUT[suggester(title('chart type'), option(line), option(bar), option(pie), option(radar)):yearlyWheelOfLifeCategoryChartType]`

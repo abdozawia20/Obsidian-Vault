@@ -1,0 +1,1 @@
+window.timeGarden.charts.yearlyRatingChart(dv, input.container, input);

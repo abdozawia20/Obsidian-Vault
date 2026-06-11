@@ -1,0 +1,355 @@
+/*------------------------------------------------------------------------------
+                     Weekly Note Themes for Time Garden
+                    Dynamic color progression for 52 weeks
+------------------------------------------------------------------------------*/
+:root {
+  --highlight: #ffffff;
+  --primary: #aaaaaa;
+  --dark: #333333;
+}
+
+.weekly {
+  --dark: var(--dark);
+  --text-normal: var(--highlight);
+  --text-muted: var(--highlight);
+  --text-faint: var(--highlight);
+  --checklist-done-color: var(--highlight);
+  --metadata-label-text-color: var(--highlight);
+  --metadata-input-text-color: var(--highlight);
+  --hr-color: var(--primary);
+  --blockquote-border-color: var(--primary);
+  --interactive-accent: var(--primary);
+  --collapse-icon-color-collapsed: var(--primary);
+  --checkbox-color: var(--primary);
+  --checkbox-marker-color: var(--dark);
+  --checkbox-color-hover: var(--highlight);
+  --checkbox-border-color: var(--highlight);
+  --list-marker-color: var(--highlight);
+  --code-background: black;
+  --code-normal: var(--primary); 
+  --background-modifier-border-focus: var(--primary);
+  --background-modifier-border: color-mix(in srgb, var(--highlight) 60%, transparent);
+  --background-modifier-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+  --pill-cover-hover: color-mix(in srgb, var(--highlight) 60%, transparent);
+}
+
+/* Quarter 1 (Weeks 1-13): Blues to Greens */
+.week-1 {
+  --highlight: #ffffff;
+  --primary: #ffffff;
+  --dark: #ffffff;
+}
+
+.week-2 {
+  --highlight: #cbe9fd;
+  --primary: #59a3dc;
+  --dark: #1c4871;
+}
+
+.week-3 {
+  --highlight: #c5e5fa;
+  --primary: #549cd7;
+  --dark: #1b456d;
+}
+
+.week-4 {
+  --highlight: #bfe1f8;
+  --primary: #4f94d3;
+  --dark: #1a4269;
+}
+
+.week-5 {
+  --highlight: #b9ddf5;
+  --primary: #4a8dce;
+  --dark: #193f65;
+}
+
+.week-6 {
+  --highlight: #b3d9f3;
+  --primary: #4586c9;
+  --dark: #183c61;
+}
+
+.week-7 {
+  --highlight: #add5f0;
+  --primary: #407fc5;
+  --dark: #17395d;
+}
+
+.week-8 {
+  --highlight: #a7d1ee;
+  --primary: #3b78c0;
+  --dark: #163659;
+}
+
+.week-9 {
+  --highlight: #a1cef0;
+  --primary: #3976bd;
+  --dark: #163455;
+}
+
+.week-10 {
+  --highlight: #9bd0f3;
+  --primary: #357ab9;
+  --dark: #153251;
+}
+
+.week-11 {
+  --highlight: #95cdf6;
+  --primary: #308fb5;
+  --dark: #142f4d;
+}
+
+.week-12 {
+  --highlight: #8fcaf8;
+  --primary: #2ba3b0;
+  --dark: #132d49;
+}
+
+.week-13 {
+  --highlight: #89c7fb;
+  --primary: #26b8ac;
+  --dark: #122a45;
+}
+
+/* Quarter 2 (Weeks 14-26): Greens to Yellows */
+.week-14 {
+  --highlight: #8fd9ce;
+  --primary: #23ba98;
+  --dark: #113d3c;
+}
+
+.week-15 {
+  --highlight: #94dbbe;
+  --primary: #33bd84;
+  --dark: #14463a;
+}
+
+.week-16 {
+  --highlight: #9addaf;
+  --primary: #43bf70;
+  --dark: #174f38;
+}
+
+.week-17 {
+  --highlight: #9fdfa0;
+  --primary: #53c25d;
+  --dark: #1a5836;
+}
+
+.week-18 {
+  --highlight: #a5e290;
+  --primary: #63c44a;
+  --dark: #1d6134;
+}
+
+.week-19 {
+  --highlight: #aae481;
+  --primary: #75c736;
+  --dark: #206a32;
+}
+
+.week-20 {
+  --highlight: #b0e772;
+  --primary: #87ca23;
+  --dark: #237330;
+}
+
+.week-21 {
+  --highlight: #b6e962;
+  --primary: #99cc10;
+  --dark: #267c2e;
+}
+
+.week-22 {
+  --highlight: #bcec53;
+  --primary: #abcf00;
+  --dark: #29852c;
+}
+
+.week-23 {
+  --highlight: #c2ee44;
+  --primary: #bbd100;
+  --dark: #2c8e2a;
+}
+
+.week-24 {
+  --highlight: #c8f134;
+  --primary: #cbd300;
+  --dark: #2f9728;
+}
+
+.week-25 {
+  --highlight: #cef325;
+  --primary: #dbd500;
+  --dark: #32a026;
+}
+
+.week-26 {
+  --highlight: #d4f616;
+  --primary: #ebd700;
+  --dark: #35a924;
+}
+
+/* Quarter 3 (Weeks 27-39): Yellows to Reds */
+.week-27 {
+  --highlight: #f4e04d;
+  --primary: #e9b91b;
+  --dark: #7a5e18;
+}
+
+.week-28 {
+  --highlight: #f5d84b;
+  --primary: #e6ab21;
+  --dark: #7a511a;
+}
+
+.week-29 {
+  --highlight: #f6d048;
+  --primary: #e39d27;
+  --dark: #7a451c;
+}
+
+.week-30 {
+  --highlight: #f7c846;
+  --primary: #e08f2d;
+  --dark: #7a391e;
+}
+
+.week-31 {
+  --highlight: #f8c043;
+  --primary: #dd8133;
+  --dark: #7a2d20;
+}
+
+.week-32 {
+  --highlight: #f9b841;
+  --primary: #da7339;
+  --dark: #7a2122;
+}
+
+.week-33 {
+  --highlight: #fab03e;
+  --primary: #d7653f;
+  --dark: #7a1524;
+}
+
+.week-34 {
+  --highlight: #fba83c;
+  --primary: #d45745;
+  --dark: #7a0926;
+}
+
+.week-35 {
+  --highlight: #fca039;
+  --primary: #d1494b;
+  --dark: #7a0028;
+}
+
+.week-36 {
+  --highlight: #fd9837;
+  --primary: #ce3b51;
+  --dark: #740033;
+}
+
+.week-37 {
+  --highlight: #fe9034;
+  --primary: #cb2d57;
+  --dark: #6e003e;
+}
+
+.week-38 {
+  --highlight: #ff8832;
+  --primary: #c81f5d;
+  --dark: #680049;
+}
+
+.week-39 {
+  --highlight: #ff802f;
+  --primary: #c51163;
+  --dark: #620054;
+}
+
+/* Quarter 4 (Weeks 40-52): Reds to Purples to Blues */
+.week-40 {
+  --highlight: #ff7f87;
+  --primary: #c01e70;
+  --dark: #580060;
+}
+
+.week-41 {
+  --highlight: #fd7e97;
+  --primary: #ba2c7d;
+  --dark: #4e006c;
+}
+
+.week-42 {
+  --highlight: #fb7da7;
+  --primary: #b43a8a;
+  --dark: #440078;
+}
+
+.week-43 {
+  --highlight: #f97cb7;
+  --primary: #ae4897;
+  --dark: #3a0084;
+}
+
+.week-44 {
+  --highlight: #f77bc7;
+  --primary: #a856a4;
+  --dark: #300090;
+}
+
+.week-45 {
+  --highlight: #f57ad7;
+  --primary: #a264b1;
+  --dark: #26009c;
+}
+
+.week-46 {
+  --highlight: #f379e7;
+  --primary: #9c72be;
+  --dark: #1c00a8;
+}
+
+.week-47 {
+  --highlight: #f178f7;
+  --primary: #9680cb;
+  --dark: #1200b4;
+}
+
+.week-48 {
+  --highlight: #e27cfa;
+  --primary: #8c83d1;
+  --dark: #0800c0;
+}
+
+.week-49 {
+  --highlight: #d380fd;
+  --primary: #8286d8;
+  --dark: #0400cc;
+}
+
+.week-50 {
+  --highlight: #c484ff;
+  --primary: #788ade;
+  --dark: #0010d8;
+}
+
+.week-51 {
+  --highlight: #b588ff;
+  --primary: #6e8de5;
+  --dark: #001ce4;
+}
+
+.week-52 {
+  --highlight: #a68cff;
+  --primary: #6490eb;
+  --dark: #0028f0;
+}
+
+.HyperMD-header.HyperMD-header-1 {
+  color: var(--primary);
+  font-size: 50px;
+}
