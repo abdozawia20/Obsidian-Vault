@@ -22,6 +22,7 @@ tags: [moc, gatom, in-house-products, asset-rental]
 
 ### Base
 - [[Base/Base Overview|🏗️ Base Platform Overview]]
+- [[Base/base-frappe-technical|⚙️ Frappe Technical]] · [[Base/base-web-technical|🌐 Web Technical]] · [[Base/base-flutter-technical|📱 Flutter Technical]]
 
 ### Flats
 - [[Flats/Flats Overview|🏠 Flats Variant Overview]]

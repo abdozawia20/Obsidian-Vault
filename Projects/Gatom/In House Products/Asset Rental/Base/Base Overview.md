@@ -84,9 +84,9 @@ graph TD
 |---|---|
 | **Configuration** | Multi-region (currency, tax, gateway, language, KYC types), license enforcement with grace mode, role-based access |
 | **Lead & Sales** | Multi-channel inquiry capture, quotation generation, conversion funnel tracking |
-| **Partner KYC** | Individual/Company classification, configurable document types, standalone verification workflow, guarantor portal |
+| **Partner KYC** | Individual/Company classification, configurable document types, standalone verification workflow, guarantor portal. **KYC verification is a hard prerequisite — customers cannot book or reserve assets until KYC is approved.** |
 | **Asset Management** | Lifecycle status machine, availability calendar, concurrency-safe reservation (row lock), SEO-optimised catalog |
-| **Rental Contracting** | Multi-step booking, canvas e-signature (acknowledgement only), open-ended & fixed-term agreements, self-cancellation, exit inspection |
+| **Rental Contracting** | Multi-step booking (requires approved KYC), canvas e-signature (acknowledgement only), open-ended & fixed-term agreements, self-cancellation, exit inspection |
 | **Accounting** | Recurring billing via ERPNext Subscription, partial payments, late fees, deposit ledger with dispute window, webhook idempotency |
 | **Notifications** | Payment reminders (D-N), overdue escalation (D+1→D+3→D+7→D+14→Legal D+30), multi-channel with audit log |
 | **Reporting** | Occupancy rate, revenue by asset/location, collection efficiency, tenant LTV, asset ROI, churn analysis |
@@ -132,7 +132,9 @@ flowchart TD
     B --> C{Accepted?}
     C -->|No| A
     C -->|Yes| D[Customer completes KYC — standalone]
-    D --> E[Customer submits booking — Asset Reserved]
+    D --> D1{KYC Verified?}
+    D1 -->|No — docs rejected / incomplete| D
+    D1 -->|Yes| E[Customer submits booking — Asset Reserved]
     E --> F[Staff reviews Draft Agreement]
     F -->|Approve| G[Agreement Active — Billing starts]
     F -->|Reject| H[Asset freed — Customer notified]
@@ -140,6 +142,9 @@ flowchart TD
     I --> J[Agreement ends or is terminated]
     J --> K[Exit inspection + Deposit settlement]
 ```
+
+> [!IMPORTANT]
+> **KYC Gate**: A customer's KYC status must be **Verified** before the platform allows booking or reservation. The booking form and API enforce this — unverified customers are redirected to complete/re-submit KYC.
 
 ### 7.2 Overdue Escalation
 

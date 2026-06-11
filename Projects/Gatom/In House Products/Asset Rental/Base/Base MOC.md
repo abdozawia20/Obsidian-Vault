@@ -90,7 +90,32 @@ tags: [moc, asset-rental, base]
 
 ---
 
+## 📦 Technical Docs
+
+- [[base-frappe-technical|⚙️ Frappe Technical]]
+- [[base-web-technical|🌐 Web Technical]]
+- [[base-flutter-technical|📱 Flutter Technical]]
+
+---
+
+## 🛠️ Implementation Plans
+
+| # | Domain | Plan | Effort |
+|---|---|---|---|
+| 01 | Base Configuration | [[01 - Base Configuration/implementation-plan\|📋 Plan]] | 9d |
+| 02 | Lead & Sales | [[02 - Lead & Sales/implementation-plan\|📋 Plan]] | 5d |
+| 03 | Partner KYC | [[03 - Partner KYC/implementation-plan\|📋 Plan]] | 11d |
+| 04 | Asset Management | [[04 - Asset Management/implementation-plan\|📋 Plan]] | 10d |
+| 05 | Rental Contracting | [[05 - Rental Contracting/implementation-plan\|📋 Plan]] | 14d |
+| 06 | Accounting | [[06 - Accounting/implementation-plan\|📋 Plan]] | 12d |
+| 07 | Notifications & Escalation | [[07 - Notifications & Escalation/implementation-plan\|📋 Plan]] | 8d |
+| 08 | Reporting | [[08 - Reporting/implementation-plan\|📋 Plan]] | 7d |
+| | | **Total** | **76d** |
+
+---
+
 ## 🔗 Related
 
 - [[../Asset Rental MOC|🏢 Asset Rental MOC]]
 - [[../../In House Products MOC|📦 In House Products]]
+
