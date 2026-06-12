@@ -293,32 +293,77 @@ The schema is intentionally large because it centralizes all operator-configurab
 ### 4.1 License Validator (`licensing/license_validator.py`)
 
 > **Requires**: 3.1 (reads `license_key`, `license_grace_period_days` from Rental Configuration)
+> **Integration**: `gatom_agent` (Pulse Agent) handles all license communication with Pulse server. `rental_core` only reads the result from Redis.
 
-The platform is a **licensed product** — operators need a valid license key to use it. This validator runs on every user login (`on_session_creation` hook) and checks whether the license is still valid. If the license has expired but is within the grace period (default 7 days), the system continues working but flags itself as being in grace mode. After the grace period, all users are **redirected to a `/suspended` page** and cannot access any functionality.
+The platform is a **licensed product** — operators need a valid license key (RSA-signed JWT issued by Gatom Pulse) to use it. License validation is a **two-layer** system:
 
-The validator also performs periodic remote validation (at most once per 24 hours) against a license server, with offline tolerance of 7 days for environments without reliable internet.
+1. **`gatom_agent`** (installed alongside `rental_core`) validates the license daily at 4 AM — both online (calling Pulse API) and offline (local JWT signature verification). The agent writes the validation result to Redis key `pulse:license_status`.
+2. **`rental_core`** reads `pulse:license_status` from Redis on every user login (`on_session_creation` hook) and acts on the result.
+
+This separation means `rental_core` has **zero dependency on network connectivity** for license checks — the agent handles all remote communication.
+
+> [!IMPORTANT]
+> The previous design referenced `validate_remote(lic.license_key)` — this function is **removed**. Remote validation is now handled entirely by `gatom_agent`. See [[../../Internal/Gatom Pulse/Agent/functional|Agent Functional Analysis]] and [[../../Internal/Gatom Pulse/P07 - Licensing/functional|P07 — Licensing Engine]] for the full specification.
 
 ```python
 def validate_license(login_manager=None):
-    lic = frappe.get_single("Rental Configuration")
-    if is_locally_expired(lic.license_key):
-        grace_days = lic.license_grace_period_days or 7
-        expiry_date = get_expiry_date(lic.license_key)
-        grace_end = add_days(expiry_date, grace_days)
-        if today() > grace_end:
-            frappe.local.flags.redirect_location = "/suspended"
-            raise frappe.Redirect
-    if needs_remote_check():
-        validate_remote(lic.license_key)
+    """Called on every login via on_session_creation hook.
+    Reads license status from Redis (written by gatom_agent).
+    """
+    # Read agent's license validation result from Redis
+    status = frappe.cache().get("pulse:license_status")
+    
+    if status in ("VALID", "VALID_OFFLINE", None):
+        # None = agent hasn't run yet (fresh install grace)
+        return
+    
+    if status == "EXPIRING":
+        # License expires within 30 days — show warning banner
+        frappe.msgprint(
+            "Your license is expiring soon. Contact your provider.",
+            indicator="orange", alert=True
+        )
+        return
+    
+    if status == "GRACE":
+        # License expired but within grace period
+        frappe.msgprint(
+            "Your license has expired. Operating in grace mode.",
+            indicator="red", alert=True
+        )
+        frappe.flags.in_grace_mode = True
+        return
+    
+    if status in ("EXPIRED", "REVOKED", "OFFLINE_EXPIRED"):
+        # Hard block — redirect to suspended page
+        frappe.local.flags.redirect_location = "/suspended"
+        raise frappe.Redirect
+    
+    if status == "ASSET_LIMIT":
+        frappe.msgprint(
+            "Asset limit reached. Contact your provider to upgrade.",
+            indicator="orange", alert=True
+        )
+        return
+    
+    if status in ("MISSING", "INVALID", "SITE_MISMATCH", "UNVERIFIED"):
+        frappe.local.flags.redirect_location = "/suspended"
+        raise frappe.Redirect
+
+
+def is_in_grace_mode():
+    """Check if the platform is currently in license grace mode."""
+    return frappe.cache().get("pulse:license_status") == "GRACE"
 ```
 
 **Acceptance Criteria**:
-- [ ] Valid license key → login proceeds normally, no redirect
-- [ ] Expired license within grace period → login proceeds, `is_in_grace_mode()` returns `True`
-- [ ] Expired license past grace → login redirects to `/suspended`
-- [ ] Remote validation fires at most once per 24h (not on every login)
-- [ ] Network failure during remote check → offline tolerance of 7 days before hard block
+- [ ] Valid license (status = `VALID` or `VALID_OFFLINE`) → login proceeds normally
+- [ ] Expiring license (status = `EXPIRING`) → login proceeds with warning banner
+- [ ] Grace mode (status = `GRACE`) → login proceeds with red banner, `is_in_grace_mode()` returns `True`
+- [ ] Expired/Revoked (status = `EXPIRED`, `REVOKED`, `OFFLINE_EXPIRED`) → redirect to `/suspended`
+- [ ] No license status in Redis (agent hasn't run yet) → allow login (fresh install grace)
 - [ ] `validate_license` runs on every `on_session_creation` event
+- [ ] **No direct network calls** — all remote validation is delegated to `gatom_agent`
 
 ---
 

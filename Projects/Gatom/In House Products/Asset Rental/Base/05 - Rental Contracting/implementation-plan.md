@@ -59,39 +59,137 @@ The **Rental Agreement** is the legal contract between the tenant and the landlo
 
 ---
 
-### 2.2 Controller — `on_submit`
+### 2.2 Controller — `on_submit` (Thin Hook)
 
-> **Requires**: 2.1, D04-5.1 (concurrency lock), D06-2.1 (subscription factory)
+> **Requires**: 2.1, 2.2a (Application Service)
 
-The submission handler performs **three atomic actions**: (1) reserves the asset using the concurrency-safe lock from D04 (preventing double-booking), (2) creates an ERPNext Subscription (which generates recurring invoices), and (3) creates a Deposit Ledger (tracking the tenant's security deposit). All three must succeed or the submission fails — partial state is unacceptable.
+The DocType controller's `on_submit` is a **thin delegation hook** — it calls the Application Service and nothing else. No business logic lives here. This follows Clean Architecture: the controller (Frappe framework layer) delegates to an application service (use case layer) which orchestrates the domain operations.
 
 ```python
+# rental_agreement.py (DocType controller)
 def on_submit(self):
-    reserve_asset(self.asset)
-    self.erpnext_subscription = create_subscription(self)
-    create_deposit_ledger(self)
+    from rental_core.contracting.agreement_activation_service import activate_agreement
+    activate_agreement(self)
 ```
 
+> [!IMPORTANT]
+> **Architecture Decision**: The previous version had `on_submit` directly calling `reserve_asset()`, `create_subscription()`, and `create_deposit_ledger()` inline. This violated the [software-architecture skill](file:///home/zawiatgf/Documents/Obsidian%20Vault/.agents/skills/software-architecture/SKILL.md#L52-L54) principles:
+> - **"Keep database queries out of controllers"** — the controller was orchestrating cross-domain DB operations
+> - **"Define use cases clearly and keep them isolated"** — "Activate an Agreement" is a distinct use case that deserves its own module
+> - **"Keep business logic independent of frameworks"** — embedding logic in `on_submit` couples it to Frappe's DocType lifecycle
+>
+> The refactored version moves all logic to `agreement_activation_service.py`, making it testable without Frappe's DocType machinery and reusable from other entry points (e.g., a bulk import script).
+
 **Acceptance Criteria**:
-- [ ] Submission atomically reserves the asset (uses `SELECT FOR UPDATE`)
-- [ ] ERPNext Subscription is created and linked
-- [ ] Deposit Ledger record is created with `original_amount = self.deposit_amount`
-- [ ] If asset is already Reserved/Rented, submission fails with conflict error
-- [ ] `erpnext_subscription` field is populated after submit
+- [ ] `on_submit` contains exactly one line: the delegation call to `activate_agreement(self)`
+- [ ] No business logic, database queries, or cross-domain calls in the controller
+- [ ] Controller file (`rental_agreement.py`) is under 50 lines
 
 ---
 
-### 2.3 Controller — `on_cancel`
+### 2.2a Application Service — `activate_agreement`
 
-> **Requires**: 2.1, 2.2, D04-2.2 (status transitions)
+> **Requires**: 2.1, D04-5.1 (concurrency lock), D06-2.1 (subscription factory), D06-4.1 (deposit ledger)
 
-Cancellation reverses the submission: the asset returns to `Available` and the ERPNext Subscription is cancelled (no more invoices will be generated). Only Rental Managers can cancel Active agreements. Once cancelled, an agreement **cannot be re-submitted** — a new booking must be created instead.
+The **Agreement Activation Service** (`rental_core/contracting/agreement_activation_service.py`) is the single use case module for "activate a rental agreement." It orchestrates three atomic actions: (1) reserve the asset, (2) create the billing subscription, (3) create the deposit ledger. All three must succeed or the entire operation rolls back — Frappe's implicit transaction ensures this (any `frappe.throw` inside a request rolls back the DB transaction).
+
+This service is **framework-aware but not framework-coupled** — it uses Frappe APIs (`frappe.get_doc`, `frappe.throw`) but its orchestration logic is testable by mocking those calls.
+
+```python
+# rental_core/contracting/agreement_activation_service.py
+
+def activate_agreement(agreement):
+    """
+    Use case: Activate a Rental Agreement.
+    
+    Orchestrates three atomic operations:
+    1. Reserve the asset (concurrency-safe lock from D04)
+    2. Create ERPNext Subscription (recurring billing from D06)
+    3. Create Deposit Ledger (security deposit tracking from D06)
+    
+    All three must succeed or the transaction rolls back.
+    Raises frappe.ValidationError if asset is unavailable.
+    """
+    # Step 1: Reserve the asset (D04-5.1 concurrency lock)
+    from rental_core.asset_management.reservation import reserve_asset
+    reserve_asset(agreement.asset)
+    
+    # Step 2: Create billing subscription (D06-2.1)
+    from rental_core.accounting.subscription_factory import create_subscription
+    agreement.erpnext_subscription = create_subscription(agreement)
+    
+    # Step 3: Create deposit ledger (D06-4.1)
+    from rental_core.accounting.deposit_service import create_deposit_ledger
+    create_deposit_ledger(agreement)
+    
+    # Step 4: Fire domain event for downstream listeners
+    from rental_core.utils.events import dispatch_rental_event
+    dispatch_rental_event("agreement_activated", {
+        "agreement": agreement.name,
+        "asset": agreement.asset,
+        "customer": agreement.customer,
+        "monthly_rate": agreement.monthly_rate,
+    })
+```
+
+**Why a separate module?**
+1. **Testability**: You can test `activate_agreement()` by passing a mock agreement object — no need to instantiate a real Frappe DocType or database.
+2. **Reusability**: Bulk import scripts or migration tools can call `activate_agreement()` without going through the DocType submission workflow.
+3. **Readability**: The function signature (`activate_agreement(agreement)`) communicates intent better than `on_submit(self)`.
+4. **Single Responsibility**: The controller handles Frappe lifecycle; the service handles business orchestration.
 
 **Acceptance Criteria**:
+- [ ] `agreement_activation_service.py` exists at `rental_core/contracting/agreement_activation_service.py`
+- [ ] Service atomically reserves asset, creates subscription, and creates deposit ledger
+- [ ] If asset is already Reserved/Rented, `frappe.ValidationError` is raised (entire transaction rolls back)
+- [ ] `erpnext_subscription` field is populated after activation
+- [ ] Deposit Ledger record is created with `original_amount = agreement.deposit_amount`
+- [ ] `agreement_activated` domain event is dispatched on success
+- [ ] Service is importable and callable without DocType context (for testing)
+- [ ] Function is under 50 lines (currently ~20)
+
+---
+
+### 2.3 Controller — `on_cancel` (Thin Hook)
+
+> **Requires**: 2.1, 2.2a (Application Service), D04-2.2 (status transitions)
+
+Same pattern as `on_submit` — the controller delegates to the deactivation service. The controller does NOT orchestrate the reversal steps directly.
+
+```python
+# rental_agreement.py (DocType controller)
+def on_cancel(self):
+    from rental_core.contracting.agreement_activation_service import deactivate_agreement
+    deactivate_agreement(self)
+```
+
+The `deactivate_agreement` function lives in the same service module (`agreement_activation_service.py`) and reverses the activation: (1) releases the asset back to `Available`, (2) cancels the ERPNext Subscription. Only Rental Managers can cancel Active agreements. Once cancelled, an agreement **cannot be re-submitted** — a new booking must be created instead.
+
+```python
+# In agreement_activation_service.py
+def deactivate_agreement(agreement):
+    """Reverse an activation: release asset, cancel subscription."""
+    from rental_core.asset_management.reservation import release_asset
+    release_asset(agreement.asset)
+    
+    if agreement.erpnext_subscription:
+        sub = frappe.get_doc("Subscription", agreement.erpnext_subscription)
+        sub.cancel_subscription()
+    
+    dispatch_rental_event("agreement_deactivated", {
+        "agreement": agreement.name,
+        "asset": agreement.asset,
+        "customer": agreement.customer,
+    })
+```
+
+**Acceptance Criteria**:
+- [ ] `on_cancel` contains exactly one line: the delegation call to `deactivate_agreement(self)`
 - [ ] Cancelled agreement's asset returns to `Available`
 - [ ] Linked ERPNext Subscription is cancelled
 - [ ] Already-Active agreements can be cancelled by Rental Manager
 - [ ] Cancelled agreements cannot be re-submitted
+- [ ] `agreement_deactivated` domain event is dispatched on success
 
 ---
 
