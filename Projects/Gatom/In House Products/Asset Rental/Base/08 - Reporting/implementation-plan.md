@@ -266,11 +266,50 @@ def purge_old_webhook_logs():
 
 ---
 
-## 6. Flutter — Dashboard & Charts
+## 6. Frappe — Dashboard Metrics API
 
-### 6.1 Dashboard Provider
+### 6.1 `get_dashboard_metrics`
 
-> **Requires**: D01-8.6 (FrappeClient), 7.1-7.3 (API summary endpoints or custom dashboard API)
+> **Requires**: 2.1-2.6 (all reports for data), D01-5.2 (role permissions)
+
+A dedicated API endpoint that returns the **aggregated dashboard metrics** consumed by the Flutter dashboard (§7.1) and the Desk Number Cards (§3.1). Instead of the Flutter app calling multiple report endpoints and aggregating client-side, this single endpoint returns all five metrics in one response, reducing latency and simplifying the mobile client.
+
+The endpoint uses **Redis caching** (`frappe.cache()`) with a 120-second TTL. Dashboard metrics change infrequently (driven by agreement submissions and invoice payments), so a 2-minute cache is acceptable. Cache is invalidated on Rental Agreement submit/cancel and Sales Invoice submit/payment.
+
+```python
+@frappe.whitelist()
+def get_dashboard_metrics():
+    frappe.only_for(["Rental Manager", "System Manager"])
+    cache_key = "dashboard_metrics"
+    cached = frappe.cache().get_value(cache_key)
+    if cached:
+        return cached
+    metrics = {
+        "active_agreements": frappe.db.count("Rental Agreement", {"status": "Active"}),
+        "overdue_invoices": frappe.db.count("Sales Invoice", {"outstanding_amount": [">", 0], "due_date": ["<", today()]}),
+        "occupancy_rate": _calc_occupancy_rate(),
+        "pending_kyc": frappe.db.count("Customer KYC Submission", {"kyc_status": "Pending Review"}),
+        "open_legal_cases": frappe.db.count("Legal Case", {"status": ["in", ["Open", "In Progress"]]}),
+    }
+    frappe.cache().set_value(cache_key, metrics, expires_in_sec=120)
+    return metrics
+```
+
+**Acceptance Criteria**:
+- [ ] Returns all 5 metrics in a single API call
+- [ ] Only `Rental Manager` and `System Manager` can access (other roles get 403)
+- [ ] Second request within 120s returns cached data (no SQL queries)
+- [ ] Cache invalidated on `Rental Agreement` submit/cancel
+- [ ] Cache invalidated on `Sales Invoice` payment
+- [ ] Response time under 500ms (cached) / 2s (uncached with 1000+ records)
+
+---
+
+## 7. Flutter — Dashboard & Charts
+
+### 7.1 Dashboard Provider
+
+> **Requires**: D01-8.6 (FrappeClient), 6.1 (get_dashboard_metrics API)
 
 A Riverpod provider that fetches **summary metrics** for the Flutter home screen: active agreement count, overdue invoice count, occupancy percentage, and next payment details. The data is cached (`keepAlive: true`) to prevent unnecessary re-fetches on navigation. Pull-to-refresh forces a cache invalidation.
 
@@ -281,9 +320,9 @@ A Riverpod provider that fetches **summary metrics** for the Flutter home screen
 
 ---
 
-### 6.2 Home Screen Dashboard Cards
+### 7.2 Home Screen Dashboard Cards
 
-> **Requires**: 6.1 (dashboard provider), D01-8.3 (screen stubs)
+> **Requires**: 7.1 (dashboard provider), D01-8.3 (screen stubs)
 
 Three **tappable metric cards** on the Flutter home screen: "Active Rentals" (count), "Next Payment" (amount + due date), and "Overdue" (count with red warning styling). Each card navigates to the relevant detail screen when tapped. These give the customer (or staff on mobile) an instant financial snapshot.
 
@@ -295,9 +334,9 @@ Three **tappable metric cards** on the Flutter home screen: "Active Rentals" (co
 
 ---
 
-### 6.3 Revenue Chart Widget
+### 7.3 Revenue Chart Widget
 
-> **Requires**: D01-8.2 (`fl_chart` dependency), 6.1 (data provider)
+> **Requires**: D01-8.2 (`fl_chart` dependency), 7.1 (data provider)
 
 A **bar chart** showing the last 6 months of revenue data. Each month shows invoiced vs. received amounts (either side-by-side bars or stacked). This gives the manager a visual trend of collection performance over time. The widget handles loading states (shimmer skeleton) and empty states ("No revenue data yet").
 
@@ -316,9 +355,9 @@ class RevenueChartWidget extends ConsumerWidget {
 
 ---
 
-### 6.4 Occupancy Donut Chart
+### 7.4 Occupancy Donut Chart
 
-> **Requires**: D01-8.2 (`fl_chart` dependency), 6.1
+> **Requires**: D01-8.2 (`fl_chart` dependency), 7.1
 
 A **donut/pie chart** visualizing the asset status distribution: Rented (green), Available (blue), Maintenance (orange), Retired (gray). The center of the donut shows the overall occupancy percentage. A legend below the chart labels each segment. This gives the manager a quick visual read on portfolio utilization.
 
@@ -330,9 +369,9 @@ A **donut/pie chart** visualizing the asset status distribution: Rented (green),
 
 ---
 
-## 7. Flutter — Report Deep Links
+## 8. Flutter — Report Deep Links
 
-### 7.1 Report Navigation
+### 8.1 Report Navigation
 
 > **Requires**: D01-8.9 (GoRouter)
 
@@ -345,7 +384,7 @@ The **deep link navigation** from dashboard cards to detail screens. Tapping a c
 
 ---
 
-## 8. Domain-Level Acceptance Criteria
+## 9. Domain-Level Acceptance Criteria
 
 - [ ] All 6 Script Reports run without error from Frappe Desk
 - [ ] Report data is accurate against known test data set
@@ -357,7 +396,7 @@ The **deep link navigation** from dashboard cards to detail screens. Tapping a c
 
 ---
 
-## 9. Estimated Effort
+## 10. Estimated Effort
 
 | Layer | Effort |
 |---|---|

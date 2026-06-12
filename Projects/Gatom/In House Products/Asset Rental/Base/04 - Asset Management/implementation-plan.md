@@ -123,17 +123,54 @@ Child apps extend the `checklist` with variant-specific rows (e.g., Flats adds a
 
 ---
 
-### 3.2 Exit Inspection → Deposit Deduction
+### 3.2 Exit Inspection → Domain Event Dispatch
 
-> **Requires**: 3.1 (inspection schema), D06-4.1 (Deposit Ledger schema)
+> **Requires**: 3.1 (inspection schema), D01-2.4 (extension hook architecture)
 
-When a tenant moves out and damage is found, the **exit inspection** triggers a deposit deduction. If `estimated_repair_cost > 0`, a `Deposit Deduction` row is created in the tenant's deposit ledger with `deduction_status = Pending`. The deduction is NOT auto-committed — the tenant has a dispute window (configured in D01) to challenge it. Only entry inspections are excluded from this logic (documenting pre-existing condition doesn't trigger deductions).
+When a tenant moves out and damage is found, the **exit inspection** fires a domain event rather than writing directly to the Accounting domain's tables. This preserves **bounded context separation** — the Asset Management domain (D04) knows about inspections, not deposit ledgers.
+
+> [!IMPORTANT]
+> **Architecture Decision**: This subtask previously had D04 directly creating `Deposit Deduction` rows in D06's `Deposit Ledger`. That violated DDD's bounded context principle — D04 was importing and manipulating D06's internal schema. The refactored version uses the **domain event pattern** (same as `on_invoice_created` in D06-§2.5) to decouple the domains.
+
+If `estimated_repair_cost > 0` on an Exit inspection, the controller dispatches an `exit_inspection_completed` event with the inspection data. D06 listens to this event (via `rental_hooks` in hooks.py) and creates the `Deposit Deduction` row internally. D04 never imports, references, or knows about the `Deposit Ledger` DocType.
+
+```python
+# In D04's Asset Inspection controller
+def on_submit(self):
+    if self.inspection_type == "Exit" and self.estimated_repair_cost > 0:
+        from rental_core.utils.events import dispatch_rental_event
+        dispatch_rental_event("exit_inspection_completed", {
+            "inspection": self.name,
+            "agreement": self.agreement,
+            "estimated_repair_cost": self.estimated_repair_cost,
+            "damage_notes": self.damage_notes,
+            "photo_evidence": self.photos[0].photo if self.photos else None,
+        })
+```
+
+```python
+# D06 registers a handler in hooks.py:
+# rental_hooks = {"exit_inspection_completed": "rental_core.accounting.deposits.handle_exit_inspection"}
+
+# In rental_core/accounting/deposits.py (D06 owned)
+def handle_exit_inspection(inspection, agreement, estimated_repair_cost, **kwargs):
+    ledger = frappe.get_doc("Deposit Ledger", {"agreement": agreement})
+    ledger.append("deductions", {
+        "reason": f"Damage per inspection {inspection}",
+        "amount": estimated_repair_cost,
+        "deduction_status": "Pending",
+        "photo_evidence": kwargs.get("photo_evidence"),
+    })
+    ledger.save(ignore_permissions=True)
+```
 
 **Acceptance Criteria**:
-- [ ] Submitting an `Exit` inspection with `estimated_repair_cost > 0` creates a `Deposit Deduction` row
-- [ ] Deduction row has `deduction_status = Pending` (not auto-committed)
+- [ ] Submitting an `Exit` inspection with `estimated_repair_cost > 0` dispatches `exit_inspection_completed` event
+- [ ] D06's handler creates a `Deposit Deduction` row with `deduction_status = Pending`
 - [ ] Deduction `reason` includes reference to the inspection name
-- [ ] Submitting an `Entry` inspection does NOT create a deposit deduction
+- [ ] Submitting an `Entry` inspection does NOT dispatch the event
+- [ ] D04 code does NOT import or reference `Deposit Ledger` or `Deposit Deduction` DocTypes
+- [ ] If D06's handler is not registered (edge case), the event fires without error
 
 ---
 
@@ -373,6 +410,49 @@ Powers the **"My Active Rentals" summary card** on the home screen. Returns the 
 
 ---
 
+### 7.6 Redis Cache Layer for Catalog APIs
+
+> **Requires**: 7.1 (get_available_assets), 7.4 (get_featured_assets), D01 Frappe cache (`frappe.cache()`)
+
+The catalog APIs (§7.1 and §7.4) are the **highest-traffic endpoints** in the platform — every visitor hits them. Without caching, each request runs a multi-table SQL query against `Rental Asset`, `Rental Agreement`, and `File` tables. This caching layer uses **Frappe's built-in Redis cache** (`frappe.cache()`) to avoid redundant database queries.
+
+> [!NOTE]
+> **Library-First**: We use `frappe.cache().get_value()` / `set_value()` (which wraps Redis) — NOT a custom Redis client. Frappe manages the Redis connection, serialization, and cluster compatibility.
+
+**Caching strategy**:
+- **`get_available_assets`**: Cache key = `catalog:{hash(filters)}`, TTL = 60 seconds. The filter hash includes `asset_type`, `location`, `max_price`, `page`, `page_size`. This means the same filter combination returns cached results for up to 60 seconds.
+- **`get_featured_assets`**: Cache key = `featured_assets`, TTL = 300 seconds. Featured assets change infrequently (operator curates them), so a 5-minute cache is acceptable.
+
+**Cache invalidation**:
+- On `Rental Asset` save/submit/cancel → invalidate all `catalog:*` keys (Frappe's `frappe.cache().delete_keys("catalog:")` supports prefix deletion)
+- On `is_featured` flag change → invalidate `featured_assets` key
+- Pull-to-refresh from Flutter → API call includes `?no_cache=1` parameter that bypasses the cache
+
+```python
+@frappe.whitelist(allow_guest=True)
+def get_available_assets(asset_type=None, location=None, max_price=None, page=1, page_size=24, no_cache=False):
+    cache_key = f"catalog:{hashlib.md5(f'{asset_type}:{location}:{max_price}:{page}:{page_size}'.encode()).hexdigest()}"
+    if not no_cache:
+        cached = frappe.cache().get_value(cache_key)
+        if cached:
+            return cached
+    result = _query_catalog(asset_type, location, max_price, page, page_size)  # §4.1
+    frappe.cache().set_value(cache_key, result, expires_in_sec=60)
+    return result
+```
+
+**Acceptance Criteria**:
+- [ ] Second identical catalog request within 60s returns cached result (no SQL query)
+- [ ] Cache key includes all filter parameters (different filters = different cache entries)
+- [ ] Saving a `Rental Asset` invalidates all catalog cache entries
+- [ ] Changing `is_featured` invalidates the featured assets cache
+- [ ] `no_cache=1` parameter bypasses cache and refreshes it
+- [ ] Cache uses `frappe.cache()` (Redis) — not database or in-memory
+- [ ] Featured assets cache TTL is 300 seconds
+- [ ] Cache miss → normal SQL query → result stored in cache
+
+---
+
 ## 8. Web — Catalog Page
 
 ### 8.1 Controller `www/rentals.py`
@@ -414,6 +494,66 @@ function loadAssets(filters = {}, page = 1) {
 - [ ] Pagination controls appear when `has_next=true`
 - [ ] "Previous" disabled on page 1; "Next" disabled on last page
 - [ ] All calls use `frappe.call()` (CSRF-safe)
+
+---
+
+### 8.3 Variant-Aware Card Rendering
+
+> **Requires**: 8.2 (AJAX filter), D01-2.4 (extension hook architecture)
+
+The base catalog displays **both Flats and Vehicles** when both child apps are installed. However, a Flat card and a Vehicle card look different — a Flat shows bedrooms, bathrooms, and floor area, while a Vehicle shows make, model, seats, and transmission. The base layer must support this **without hardcoding variant-specific fields**.
+
+The card template uses an **attribute slot pattern**: the base card renders the cover image, name, price, location, and availability badge (these are common to all assets). Below the common fields, a `<div class="asset-card-attributes">` section renders a **dynamic attribute grid** populated from the asset's `variant_attributes` API field. This field is a list of `{label, value}` pairs that the child app injects via a `doc_events` hook on `Rental Asset`.
+
+For example, `rental_flats` hooks into `Rental Asset.on_load` and adds `[{"label": "Bedrooms", "value": "3"}, {"label": "Area", "value": "120 sqm"}]`. The base template iterates over this list and renders each pair as a `<span class="attr"><strong>{{ attr.label }}:</strong> {{ attr.value }}</span>`.
+
+If no child app is installed (unlikely but possible during development), the attribute section is simply empty — the card still renders correctly with just the base fields.
+
+```html
+<!-- In catalog card template -->
+<div class="asset-card-attributes">
+  {% for attr in asset.variant_attributes or [] %}
+    <span class="attr"><strong>{{ attr.label }}:</strong> {{ attr.value }}</span>
+  {% endfor %}
+</div>
+```
+
+**Acceptance Criteria**:
+- [ ] Flat assets display bedroom count, bathroom count, and area in the attribute grid
+- [ ] Vehicle assets display make, model, seats, and transmission in the attribute grid
+- [ ] Cards render correctly with zero variant attributes (base-only installation)
+- [ ] The base template does NOT import or reference `rental_flats` or `rental_vehicles` code
+- [ ] Variant attributes are injected via `doc_events` hook (child app responsibility)
+- [ ] Attribute grid layout adapts to 2–5 attributes without breaking
+
+---
+
+### 8.4 Sitemap Verification
+
+> **Requires**: 8.1 (catalog page must be a `www/` route), D01-7.4 (robots.txt references sitemap)
+
+Frappe automatically generates a `sitemap.xml` for all pages under `www/`. However, **dynamic catalog pages** (asset detail pages rendered via `www/rentals/{asset}.py`) may not be automatically included because they use wildcard routing rather than static files. This subtask verifies that:
+
+1. The main `/rentals` catalog page is in the sitemap
+2. All individual asset detail pages (`/rentals/ASSET-001`, `/rentals/ASSET-002`, etc.) are included
+3. Portal pages (`/my-rentals`, `/my-invoices`, `/my-kyc`) are **excluded** (they're behind auth)
+4. The sitemap is accessible at the URL referenced in `robots.txt` (D01-7.4)
+
+If Frappe's automatic sitemap doesn't include the dynamic asset pages, a custom sitemap generator must be implemented using Frappe's `get_sitemap_routes` hook to dynamically list all `Available` assets.
+
+```python
+# In hooks.py (if dynamic pages need explicit inclusion)
+def get_sitemap_routes():
+    assets = frappe.get_all("Rental Asset", filters={"status": "Available"}, pluck="name")
+    return [{"route": f"rentals/{a}", "lastmod": frappe.utils.now()} for a in assets]
+```
+
+**Acceptance Criteria**:
+- [ ] `curl /sitemap.xml` returns a valid XML sitemap
+- [ ] `/rentals` is listed in the sitemap
+- [ ] At least one asset detail page (`/rentals/{name}`) is listed
+- [ ] Portal pages (`/my-rentals`, `/my-invoices`) are NOT in the sitemap
+- [ ] Sitemap URL in `robots.txt` resolves correctly
 
 ---
 
@@ -537,6 +677,42 @@ Two widgets added to the Flutter **home screen**: (1) `FeaturedAssetsCarousel` �
 - [ ] `ActiveRentalSummaryCard` shows next invoice amount + due date
 - [ ] No featured assets → section hidden (not empty carousel)
 - [ ] No active rentals → summary card hidden
+
+---
+
+### 10.7 Variant-Aware Card Widget (Flutter)
+
+> **Requires**: 10.2 (base card widget), D01-2.4 (extension hook architecture)
+
+The Flutter counterpart to the web's variant-aware card rendering (8.3). The `AssetCardWidget` renders common fields (image, name, price, location) and a **dynamic attribute row** below them. The attribute data comes from the same `variant_attributes` field in the API response — a list of `{label, value}` maps.
+
+The widget renders attributes as a horizontal `Wrap` of `Chip`-style labels (e.g., "🛏 3 Beds" · "📐 120 sqm" for flats, "⚙️ Automatic" · "💺 5 Seats" for vehicles). If the list is empty, the attribute row is hidden entirely.
+
+Child apps provide the attributes server-side — the Flutter app never checks `asset_type` to decide what to show. This keeps the base app free of variant-specific UI logic.
+
+```dart
+class AssetAttributeRow extends StatelessWidget {
+  final List<Map<String, String>> attributes;
+  @override
+  Widget build(BuildContext context) {
+    if (attributes.isEmpty) return const SizedBox.shrink();
+    return Wrap(
+      spacing: 8, runSpacing: 4,
+      children: attributes.map((a) => Chip(
+        label: Text('${a["label"]}: ${a["value"]}'),
+        visualDensity: VisualDensity.compact,
+      )).toList(),
+    );
+  }
+}
+```
+
+**Acceptance Criteria**:
+- [ ] Flat assets show bedroom, bathroom, area chips in the card
+- [ ] Vehicle assets show make, model, seats, transmission chips in the card
+- [ ] Zero attributes → attribute row is hidden (not an empty Wrap)
+- [ ] Base Flutter code does NOT import or reference child app packages
+- [ ] Chip row wraps gracefully on narrow screens
 
 ---
 

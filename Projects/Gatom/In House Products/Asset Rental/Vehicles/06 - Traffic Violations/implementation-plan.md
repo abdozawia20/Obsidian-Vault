@@ -242,7 +242,100 @@ The Guarantor role cannot access this screen — violation history is private to
 
 ---
 
-## 6. Domain-Level Acceptance Criteria
+## 6. Cross-Cutting Concerns
+
+### 6.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `report_traffic_violation` API (Staff) | `INFO` | Agreement name, vehicle name, violation type, fine amount, reported by user |
+| `report_traffic_violation` API (Tenant) | `INFO` | Agreement name, vehicle name, violation type, fine amount, self-reported by user |
+| Rate limit trigger (6th submission) | `WARNING` | User email, submission count in rolling hour, IP address |
+| Violation status transition | `INFO` | Violation name, old status → new status, transitioned by user, review notes if applicable |
+| Violation confirmation (Fleet Manager) | `INFO` | Violation name, confirmed by user, charge_to decision |
+| Violation rejection (Fleet Manager) | `INFO` | Violation name, rejected by user, review notes |
+| Deposit deduction (Scenario 1: full coverage) | `INFO` | Violation name, agreement name, fine amount, deposit deduction amount |
+| Deposit deduction (Scenario 2: partial) | `INFO` | Violation name, agreement name, fine amount, deposit portion, invoice remainder |
+| Post-settlement invoice (Scenario 3) | `WARNING` | Violation name, ex-tenant email, standalone invoice name, fine amount |
+| `get_violation_history` API | `INFO` | Agreement name, caller role, violation count returned, execution time |
+| Evidence document access attempt | `INFO` | Violation name, caller role, access granted/denied |
+
+**Acceptance Criteria**:
+- [ ] All violation status transitions logged with full context (who, when, why)
+- [ ] Financial charging operations logged at `INFO` with deposit/invoice breakdown
+- [ ] Post-settlement invoicing logged at `WARNING` (unusual event requiring attention)
+- [ ] Rate limit triggers logged at `WARNING` with user and IP context
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] No sensitive evidence document content in logs (only document names/references)
+
+---
+
+### 6.2 Caching
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Violation history (per agreement) | `violation_history:{agreement_name}` | 10 min | Traffic Violation create/update |
+| Violation count (for rate limiting) | `violation_rate:{user_email}` | 60 min (rolling window) | New violation submission |
+| Active agreement lookup (for charge routing) | `active_agreement:{vehicle_name}` | 5 min | Rental Agreement status change |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). The rate limiting counter uses Redis `INCR` with TTL for efficient rolling window tracking.
+
+**Acceptance Criteria**:
+- [ ] Violation history cached per agreement with moderate TTL
+- [ ] Rate limiting counter uses Redis atomic increment (not DB queries)
+- [ ] Cache invalidated when violations are created or status changes
+- [ ] Active agreement cache invalidated on agreement status transitions
+
+---
+
+### 6.3 Rate Limiting
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| `report_traffic_violation` (Tenant self-report) | 5 req/hour | Per authenticated user | HTTP 429 with user-friendly error message |
+| `report_traffic_violation` (Staff) | 60 req/min | Per user session | HTTP 429 with `Retry-After` header |
+| `get_violation_history` API | 30 req/min | Per user | HTTP 429 with `Retry-After` header |
+
+**Implementation**: Tenant self-report rate limit is intentionally aggressive (5/hour) to prevent abuse. Staff rate limit is standard. The rate limit check for tenant self-reports uses Redis-backed counter (see 6.2).
+
+**Acceptance Criteria**:
+- [ ] Tenant self-report limited to 5 per hour per user
+- [ ] 6th submission within an hour returns HTTP 429 with message: "You've submitted several reports recently. Please try again in an hour."
+- [ ] Staff submissions have a higher limit (60/min)
+- [ ] Rate limit logging at `WARNING` when limit is triggered
+
+---
+
+### 6.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Role-based status assignment | `report_traffic_violation` API | Staff → `Confirmed`; Customer → `Pending Review` (based on session user role) |
+| Approval gate role enforcement | Status transition | Only Fleet Manager can transition `Pending Review` → `Confirmed` or `Rejected` |
+| Agreement ownership validation | `report_traffic_violation` (Customer) | Customer can only report violations against their own agreements |
+| Guarantor exclusion | `get_violation_history` | Guarantors explicitly blocked from accessing violation data |
+| Evidence document access control | `get_violation_history` | Evidence documents only accessible to Fleet Manager and Accountant (NOT customers) |
+| Charge idempotency | Charging logic | `Paid` status violations cannot be charged again (idempotent processing) |
+| Post-settlement invoice guard | Charging logic (Scenario 3) | Standalone invoices require validation that original agreement is settled and deposit refunded |
+| Violation-agreement date matching | `Traffic Violation` validation | `violation_date` must fall within the linked agreement's date range |
+| Fine amount validation | `Traffic Violation` validation | `fine_amount` must be positive (reject negative or zero values) |
+| Review notes requirement | Rejection workflow | `Rejected` violations require non-empty `review_notes` (transparency) |
+
+**Acceptance Criteria**:
+- [ ] Customer self-reports always start at `Pending Review` (cannot self-confirm)
+- [ ] Only Fleet Manager can approve/reject pending violations
+- [ ] Customers can only report violations on their own agreements
+- [ ] Evidence documents blocked for Customer role (only Fleet Manager + Accountant)
+- [ ] Guarantors receive HTTP 403 on violation endpoints
+- [ ] Double-charging prevented (idempotent charging logic)
+- [ ] Violation date validated against agreement date range
+- [ ] Rejection requires review notes
+
+---
+
+## 7. Domain-Level Acceptance Criteria
 
 - [ ] Staff-reported violations are immediately Confirmed
 - [ ] Self-reported violations go to Pending Review
@@ -255,7 +348,7 @@ The Guarantor role cannot access this screen — violation history is private to
 
 ---
 
-## 7. Estimated Effort
+## 8. Estimated Effort
 
 | Layer | Effort |
 |---|---|

@@ -287,7 +287,98 @@ The widget is hidden for the Guarantor role — guarantors (co-signers) are not 
 
 ---
 
-## 6. Domain-Level Acceptance Criteria
+## 6. Cross-Cutting Concerns
+
+### 6.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `log_mileage` API (Pickup) | `INFO` | Agreement name, vehicle name, odometer reading, fuel level, logged by user |
+| `log_mileage` API (Return) | `INFO` | Agreement name, vehicle name, odometer, fuel, computed: driven_km, overage_km, overage_charge |
+| Return controller — overage computation | `INFO` | Agreement name, pickup_odometer, return_odometer, included_km, overage_km, charge amount |
+| Return controller — fuel deficit | `INFO` | Agreement name, fuel_policy, return_fuel_pct, threshold, deficit_charge |
+| Invoice append (overage) | `INFO` | Agreement name, invoice name, overage line item amount |
+| Invoice append (fuel deficit) | `INFO` | Agreement name, invoice name, fuel deficit line item amount |
+| `get_mileage_history` API | `INFO` | Agreement name, caller role, log count returned, execution time |
+| `get_estimated_mileage` API | `INFO` | Agreement name, GPS status, estimated_km or null result |
+| Odometer validation failure | `WARNING` | Vehicle name, entered reading, previous reading, user |
+| `custom_current_mileage_km` update | `DEBUG` | Vehicle name, old mileage, new mileage |
+
+**Acceptance Criteria**:
+- [ ] All overage and fuel deficit computations logged with full breakdown at `INFO` level
+- [ ] Odometer validation failures logged at `WARNING` with entered vs expected values
+- [ ] Invoice append operations logged with agreement + invoice reference
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] No sensitive customer PII in logs (agreement names and vehicle names are acceptable)
+
+---
+
+### 6.2 Caching
+
+Mileage data is mostly write-once/read-many after an agreement completes:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Mileage history (completed agreements) | `mileage_history:{agreement_name}` | 60 min | Vehicle Mileage Log submission |
+| Estimated mileage (GPS) | `estimated_mileage:{agreement_name}` | 2 min | GPS Daily Summary update |
+| Vehicle Category mileage policy | `category_policy:{category_name}` | 30 min | Vehicle Category save |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). Mileage history for completed agreements can have a longer TTL since the data is immutable after return. Active agreement estimates use a short TTL (2 min) because GPS data changes frequently.
+
+**Acceptance Criteria**:
+- [ ] Completed agreement mileage history cached with long TTL (data is immutable)
+- [ ] Active agreement estimated mileage cached with short TTL (GPS data changes)
+- [ ] Cache invalidated when new mileage logs are submitted
+- [ ] Category policy cache invalidated on Vehicle Category save
+
+---
+
+### 6.3 Rate Limiting
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| `log_mileage` API | 30 req/min | Per user (staff only) | HTTP 429 with `Retry-After` header |
+| `get_mileage_history` API | 30 req/min | Per user (customer) | HTTP 429 with `Retry-After` header |
+| `get_estimated_mileage` API | 20 req/min | Per user (customer) | HTTP 429 with `Retry-After` header |
+
+**Implementation**: Enforce via Frappe's `frappe.rate_limiter.rate_limit()` decorator. The `log_mileage` endpoint is staff-only so a higher limit is appropriate. The estimated mileage endpoint has a tighter limit because it queries GPS data which is computationally expensive.
+
+**Acceptance Criteria**:
+- [ ] Staff mileage logging rate-limited to prevent accidental duplicate submissions
+- [ ] Customer mileage history rate-limited per table above
+- [ ] Estimated mileage endpoint has tighter limit due to GPS query cost
+- [ ] Exceeding limit returns HTTP 429 with `Retry-After` header
+
+---
+
+### 6.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Role gate: `log_mileage` | API entry | Only `Rental Agent` and `Fleet Manager` roles can create mileage logs |
+| Customer isolation: `get_mileage_history` | API entry | Server-side filter by `frappe.session.user` → 403 for other customers' agreements |
+| Guarantor exclusion | `get_mileage_history`, `get_estimated_mileage` | Guarantors explicitly blocked from accessing any mileage data |
+| Odometer monotonicity | `on_submit` validation | New reading must be ≥ previous reading for the same vehicle (prevents data tampering) |
+| Fuel level bounds | `Vehicle Mileage Log` validation | `fuel_level_pct` must be 0–100 (reject values outside range) |
+| Duplicate pickup prevention | `log_mileage` API | Only one submitted Pickup log per agreement (prevent baseline manipulation) |
+| Invoice append authorization | Return controller | Only system-generated invoice items (not manually callable by any role) |
+| Overage computation integrity | Return controller | Computation uses `docstatus = 1` pickup logs only (draft/cancelled logs ignored) |
+| `custom_current_mileage_km` write | Return controller | Only updated via return controller (not directly editable by users in Desk) |
+
+**Acceptance Criteria**:
+- [ ] Customer role cannot create mileage logs (verified via role check)
+- [ ] Customers can only view their own agreement's mileage data
+- [ ] Guarantors receive HTTP 403 on all mileage endpoints
+- [ ] Odometer monotonicity enforced server-side (cannot be bypassed)
+- [ ] Fuel level values outside 0–100 range rejected with validation error
+- [ ] Duplicate Pickup log blocked for same agreement
+- [ ] Overage computation only uses submitted (docstatus=1) pickup logs
+
+---
+
+## 7. Domain-Level Acceptance Criteria
 
 - [ ] Odometer logged at every pickup and return
 - [ ] Overage computed correctly: `max(0, driven - included)`
@@ -300,7 +391,7 @@ The widget is hidden for the Guarantor role — guarantors (co-signers) are not 
 
 ---
 
-## 7. Estimated Effort
+## 8. Estimated Effort
 
 | Layer | Effort |
 |---|---|

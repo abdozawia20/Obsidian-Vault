@@ -219,7 +219,102 @@ Entry inspection data is **NOT shown** to customers in the Flutter app — only 
 
 ---
 
-## 7. Domain-Level Acceptance Criteria
+## 7. Cross-Cutting Concerns
+
+### 7.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| Entry inspection creation | `INFO` | Agreement name, vehicle name, inspected by user, item count, timestamp |
+| Exit inspection creation | `INFO` | Agreement name, vehicle name, inspected by user, item count, damage count, total damage cost |
+| Damage comparison (entry vs exit) | `INFO` | Agreement name, items worsened count, items unchanged count, new damage descriptions |
+| Deposit deduction processing | `INFO` | Agreement name, total damage cost, deposit balance, deduction amount, invoice remainder (if any) |
+| Deposit deduction — idempotency check | `DEBUG` | Agreement name, existing deduction found, skip duplicate |
+| Photo evidence upload | `INFO` | Inspection name, item name, file size, file type |
+| Inspection submission lock | `DEBUG` | Inspection name, locked by docstatus=1, no further edits allowed |
+| Duplicate inspection blocked | `WARNING` | Agreement name, inspection type (Entry/Exit), duplicate creation attempt by user |
+| Exit without Entry blocked | `WARNING` | Agreement name, exit inspection attempt without submitted entry inspection |
+| Overall condition computation | `DEBUG` | Inspection name, computed condition (Good/Fair/Poor), item condition breakdown |
+
+**Acceptance Criteria**:
+- [ ] All inspection creation events logged with full context (agreement, vehicle, user, timestamp)
+- [ ] Damage comparison results logged at `INFO` with item-level breakdown
+- [ ] Deposit deduction operations logged with financial breakdown
+- [ ] Duplicate inspection attempts logged at `WARNING`
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] Photo file paths NOT logged (only file size and type for audit)
+
+---
+
+### 7.2 Caching
+
+Inspection data is mostly immutable after submission — caching is straightforward:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Inspection checklist template | `inspection_template:current` | 60 min | Fleet Manager updates template |
+| Completed inspection results (per agreement) | `inspection:{agreement_name}` | 60 min | Inspection submission |
+| Damage comparison summary | `damage_comparison:{agreement_name}` | 60 min | Exit inspection submission |
+| Deposit deduction summary (per agreement) | `inspection_deductions:{agreement_name}` | 30 min | Deposit ledger update |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). Submitted inspections are immutable (docstatus=1), so caching is safe with long TTLs. Template cache is invalidated when the Fleet Manager modifies the checklist configuration.
+
+**Acceptance Criteria**:
+- [ ] Inspection template cached to avoid per-creation DB lookups
+- [ ] Completed inspection results cached with long TTL (immutable after submission)
+- [ ] Cache invalidated when inspections are submitted or template is updated
+- [ ] Damage comparison cached after exit inspection to avoid repeated computation
+
+---
+
+### 7.3 Rate Limiting
+
+Inspections are entirely staff-operated — standard Desk rate limiting applies:
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| Inspection creation (Desk) | Frappe default | Per user session | Standard Frappe rate limiting |
+| Customer inspection view (read-only) | 30 req/min | Per user | HTTP 429 with `Retry-After` header |
+| Photo evidence download | 20 req/min | Per user | HTTP 429 with `Retry-After` header |
+
+**Acceptance Criteria**:
+- [ ] Customer read-only inspection views rate-limited to prevent scraping
+- [ ] Photo downloads rate-limited to prevent bulk evidence extraction
+- [ ] Staff Desk operations use standard Frappe rate limiting
+
+---
+
+### 7.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Inspection role gate (creation) | `Vehicle Inspection` DocType | Only Rental Agent and Fleet Manager can create/submit; Customer CANNOT create |
+| Inspection immutability | Post-submission | `docstatus = 1` → no edits allowed (not even System Manager); amend-only for corrections |
+| Duplicate inspection prevention | `Vehicle Inspection` validation | Only one Entry and one Exit per agreement (enforced on save) |
+| Entry-before-Exit enforcement | Exit inspection creation | Exit inspection requires a submitted Entry inspection for the same agreement |
+| Photo evidence access control | Customer-facing views | Pickup inspection photos: visible to customer; Return inspection photos: NOT visible to customer |
+| Guarantor exclusion | All inspection views | Guarantors blocked from accessing any inspection data |
+| Deduction photo requirement | Deposit deduction processing | Items flagged for deduction MUST have damage photo evidence (enforcement on submit) |
+| Deduction idempotency | Deposit deduction processing | Duplicate deductions prevented by checking for existing deductions linked to the same inspection |
+| Damage cost validation | `Vehicle Inspection Item` | `estimated_repair_cost` must be non-negative; damaged items must have cost > 0 |
+| Customer data isolation | Web portal + Flutter | Customers can only view inspections for their own agreements |
+
+**Acceptance Criteria**:
+- [ ] Customers cannot create or edit inspections
+- [ ] Submitted inspections locked against all edits (including System Manager)
+- [ ] Duplicate Entry/Exit inspections prevented per agreement
+- [ ] Exit inspection blocked without submitted Entry inspection
+- [ ] Return inspection photos excluded from customer-facing views
+- [ ] Guarantors receive HTTP 403 on inspection endpoints
+- [ ] Deposit deductions require photo evidence (enforced)
+- [ ] Duplicate deductions prevented (idempotent processing)
+- [ ] Damage costs validated as non-negative
+
+---
+
+## 8. Domain-Level Acceptance Criteria
 
 - [ ] Entry inspection documented at every vehicle pickup
 - [ ] Exit inspection documented at every vehicle return
@@ -233,7 +328,7 @@ Entry inspection data is **NOT shown** to customers in the Flutter app — only 
 
 ---
 
-## 8. Estimated Effort
+## 9. Estimated Effort
 
 | Layer | Effort |
 |---|---|

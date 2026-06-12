@@ -355,7 +355,111 @@ Static map markers don't tell the Fleet Manager where a vehicle is *now* — onl
 
 ---
 
-## 8. Domain-Level Acceptance Criteria
+## 8. Cross-Cutting Concerns
+
+### 8.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `receive_gps_event` webhook | `DEBUG` | Device ID, resolved asset (or NULL), lat/lng truncated to 2 decimals, speed |
+| HMAC verification success | `DEBUG` | Device ID, source IP |
+| HMAC verification failure | `WARNING` | Device ID, source IP, failure reason, payload excerpt (first 200 chars) |
+| HMAC failure rate alert (5+/hour) | `ERROR` | Failure count in rolling hour, distinct source IPs, alert sent to Fleet Manager |
+| Speed threshold violation | `INFO` | Vehicle name, speed recorded, threshold, lat/lng, timestamp |
+| Speed alert rate limiting | `DEBUG` | Vehicle name, alert suppressed (within 15-min cooldown) |
+| Geofence violation | `INFO` | Vehicle name, geofence name, lat/lng at violation, timestamp |
+| Daily aggregation scheduler | `INFO` | Vehicles processed, summaries created/updated, execution time |
+| 90-day purge scheduler | `INFO` | Events deleted count, date cutoff, execution time, freed storage estimate |
+| Device-to-asset resolution miss | `INFO` | Device ID not found in any Rental Asset, event stored with asset=NULL |
+| `get_vehicle_location` API | `INFO` | Vehicle name, caller role, data freshness (seconds since last event) |
+| `get_all_vehicle_locations` API | `INFO` | Vehicle count returned, caller role, execution time |
+
+**Acceptance Criteria**:
+- [ ] HMAC failures logged at `WARNING` with source IP for security monitoring
+- [ ] HMAC failure rate escalation logged at `ERROR` when threshold exceeded
+- [ ] GPS event ingestion logged at `DEBUG` (not `INFO` — volume would flood logs at `INFO`)
+- [ ] Speed alerts and geofence violations logged at `INFO`
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] Full lat/lng coordinates NOT logged at `INFO` level (truncate to 2 decimal places for privacy)
+
+---
+
+### 8.2 Caching
+
+GPS data has unique caching requirements due to real-time nature and high volume:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Last known position (per vehicle) | `gps_last_pos:{asset_name}` | 60 sec | New GPS event received for that vehicle |
+| All vehicle positions (fleet map) | `gps_fleet_positions:all` | 10 sec | Any new GPS event |
+| Device-to-asset mapping | `gps_device_map:{device_id}` | 5 min | Rental Asset save (GPS device ID change) |
+| Speed threshold config | `gps_speed_threshold` | 30 min | Rental Configuration save |
+| Daily summary (per vehicle) | `gps_daily_summary:{vehicle}:{date}` | 24 hr | Daily aggregation scheduler run |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). The device-to-asset mapping cache is critical for webhook performance — without it, every incoming GPS event would require a DB lookup to resolve `device_id` → `asset_name`.
+
+**Acceptance Criteria**:
+- [ ] Device-to-asset mapping cached with 5-min TTL to avoid per-event DB lookups
+- [ ] Fleet map positions cached with very short TTL (10 sec) for near-real-time updates
+- [ ] Speed threshold cached to avoid per-event config lookups
+- [ ] Daily summary cached after aggregation for downstream V03 mileage estimate queries
+
+---
+
+### 8.3 Rate Limiting
+
+The GPS webhook is a public endpoint — rate limiting is critical to prevent abuse:
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| `receive_gps_event` webhook | 1000 req/min | Per source IP | HTTP 429 (silent — GPS devices will retry) |
+| `get_vehicle_location` API | 60 req/min | Per user (Fleet Manager) | HTTP 429 with `Retry-After` header |
+| `get_all_vehicle_locations` API | 30 req/min | Per user (Fleet Manager) | HTTP 429 with `Retry-After` header |
+| Aggregation scheduler | N/A (server-side) | Daily at 2 AM | Not applicable |
+| Purge scheduler | N/A (server-side) | Daily at 3 AM | Not applicable |
+
+**Implementation**: Webhook rate limiting at Nginx layer (`limit_req_zone` by source IP) for performance — Frappe-level rate limiting would add latency to the high-volume webhook. API endpoints use Frappe's `frappe.rate_limiter.rate_limit()` decorator.
+
+**Acceptance Criteria**:
+- [ ] Webhook rate-limited at Nginx level (not Frappe) for minimal latency
+- [ ] Fleet map APIs rate-limited to prevent excessive polling
+- [ ] Rate limit on webhook does not cause GPS data loss (devices retry on 429)
+- [ ] Scheduler jobs protected by Frappe's built-in scheduler lock
+
+---
+
+### 8.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| HMAC signature verification | `receive_gps_event` webhook | HMAC-SHA256 with timing-safe comparison; reject invalid signatures with HTTP 401 |
+| Webhook secret existence | `receive_gps_event` webhook | Missing `gps_webhook_secret` in config → `frappe.throw` with setup instructions (fail-closed) |
+| Source IP logging | All webhook requests | `frappe.request.remote_addr` captured for security audit trail |
+| GPS data role gate | `get_vehicle_location`, `get_all_vehicle_locations` | Fleet Manager role only; Customer → HTTP 403; Rental Agent → HTTP 403 |
+| Customer GPS data prohibition | All customer-facing surfaces | Customers NEVER see GPS data (privacy + liability protection) |
+| Payload validation | `receive_gps_event` | Required fields: `device_id`, `lat`, `lng`, `ts`; reject malformed payloads |
+| Coordinate bounds validation | `receive_gps_event` | Latitude: -90 to 90; Longitude: -180 to 180; reject out-of-bounds values |
+| Speed bounds validation | `receive_gps_event` | Speed: 0 to 500 km/h; reject negative or impossibly high values |
+| SQL injection prevention | Raw SQL inserts | Use parameterized queries for all `tabVehicle GPS Event` inserts |
+| Failure log immutability | `GPS Webhook Failure Log` | Read-only for all roles; set programmatically only |
+| Payload excerpt sanitization | Failure log | Truncate payload to 500 chars; strip any HTML/script tags |
+| Socketio channel authorization | `gps:{asset_name}` | Only Fleet Manager sessions can subscribe to GPS channels |
+
+**Acceptance Criteria**:
+- [ ] HMAC verification uses timing-safe comparison (prevents timing attacks)
+- [ ] Missing webhook secret fails closed (rejects all events, does not silently skip verification)
+- [ ] GPS data never exposed to Customer or Rental Agent roles
+- [ ] Malformed payloads rejected with HTTP 400 (not stored)
+- [ ] Coordinate and speed bounds validated before storage
+- [ ] Raw SQL inserts use parameterized queries (no string interpolation)
+- [ ] Failure log is immutable (cannot be edited or deleted by any role)
+- [ ] Socketio GPS channels restricted to Fleet Manager sessions
+
+---
+
+## 9. Domain-Level Acceptance Criteria
 
 - [ ] GPS webhook stores events in raw SQL table
 - [ ] HMAC validation rejects spoofed events
@@ -368,7 +472,7 @@ Static map markers don't tell the Fleet Manager where a vehicle is *now* — onl
 
 ---
 
-## 9. Estimated Effort
+## 10. Estimated Effort
 
 | Layer | Effort |
 |---|---|

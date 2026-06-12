@@ -233,7 +233,93 @@ The important thing here is that the calendar **never discloses the reason** for
 
 ---
 
-## 6. Domain-Level Acceptance Criteria
+## 6. Cross-Cutting Concerns
+
+### 6.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `update_usage_profiles` scheduler | `INFO` | Total vehicles processed, profile transitions (e.g., "Vehicle X: Normal → Heavy"), execution time |
+| `_compute_30d_km` | `DEBUG` | Vehicle name, return log count in 30-day window, computed total km |
+| `_maybe_schedule_maintenance` | `INFO` | Vehicle name, trigger type, scheduled dates, conflict status |
+| `validate_no_maintenance_conflict` — block | `WARNING` | Agreement name, vehicle name, conflicting maintenance dates, user who attempted booking |
+| `validate_no_maintenance_conflict` — pass | `DEBUG` | Agreement name, vehicle name, no conflicts found |
+| Retroactive conflict notification | `INFO` | Maintenance schedule name, conflicting agreement names, notification sent to Fleet Manager |
+| Service record creation | `INFO` | Vehicle name, service type, odometer at service, cost, next service milestone |
+| Maintenance status transition | `INFO` | Schedule name, old status → new status, transitioned by user |
+| Calendar integration query | `DEBUG` | Vehicle name, window count merged into availability calendar |
+
+**Acceptance Criteria**:
+- [ ] Usage profile transitions logged at `INFO` (only when profile changes, not every vehicle every day)
+- [ ] Maintenance conflict blocks logged at `WARNING` with full context
+- [ ] Service record creation logged with mileage reset details
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] Scheduler execution time logged for performance monitoring
+
+---
+
+### 6.2 Caching
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Vehicle usage profiles (batch) | `usage_profiles:batch:{date}` | 24 hr | Scheduler re-run (daily) |
+| 30-day km computation | `vehicle_30d_km:{vehicle_name}` | 6 hr | Vehicle Mileage Log submission |
+| Maintenance schedule windows (per vehicle) | `maint_windows:{vehicle_name}` | 15 min | Vehicle Maintenance Schedule create/update |
+| Service record history (per vehicle) | `service_history:{vehicle_name}` | 30 min | Vehicle Service Record create |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). The 30-day km computation cache is particularly important because the scheduler queries all vehicles daily — caching reduces the repeated mileage log table scans.
+
+**Acceptance Criteria**:
+- [ ] 30-day km computation cached with 6-hour TTL (refreshed by daily scheduler)
+- [ ] Maintenance window cache invalidated on schedule create/update/status change
+- [ ] Scheduler does NOT rely on stale cache for profile classification (computes fresh daily)
+- [ ] Service history cache invalidated when new service records are created
+
+---
+
+### 6.3 Rate Limiting
+
+This domain is primarily Desk-managed with server-side schedulers. The calendar integration API is the only endpoint exposed to customers:
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| Calendar integration (maintenance windows) | 30 req/min | Per IP / Per user | HTTP 429 with `Retry-After` header |
+| Maintenance Schedule CRUD (Desk) | Frappe default | Per user session | Standard Frappe rate limiting |
+| Scheduler jobs | N/A (server-side) | Daily batch at 2 AM | Not applicable |
+
+**Acceptance Criteria**:
+- [ ] Calendar API rate-limited to prevent scraping of maintenance schedule patterns
+- [ ] Scheduler protected by Frappe's built-in scheduler lock (no parallel execution)
+- [ ] Manual maintenance creation (Desk) uses standard Frappe rate limiting
+
+---
+
+### 6.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| `asset_type` filter | `validate_no_maintenance_conflict` | Early return for non-Vehicle assets |
+| Open-ended agreement safety | Conflict detection | No `end_date` → uses 2099-12-31 fallback (safe default: all future maintenance conflicts) |
+| Calendar reason hiding | Availability calendar API | Customer response never discloses why a date is blocked (maintenance vs booking) |
+| Service record role gate | `Vehicle Service Record` DocType | Only Fleet Manager can create/view; Customer CANNOT see service records |
+| Maintenance Schedule role gate | `Vehicle Maintenance Schedule` DocType | Fleet Manager: full CRUD; Rental Agent: read-only; Customer: no access |
+| Status transition enforcement | Maintenance Schedule workflow | `Completed` requires linked `Vehicle Service Record`; `Planned` → `In Progress` → `Completed` |
+| Retroactive notification | Conflict notification | Notifications logged in `Rental Notification Log` for audit (tamper-proof) |
+| Scheduler execution isolation | `update_usage_profiles` | Only processes `is_active = 1` vehicles; non-Vehicle assets excluded |
+
+**Acceptance Criteria**:
+- [ ] Customers never see maintenance schedule details (service type, cost, technician)
+- [ ] Calendar shows blocked dates without reason (indistinguishable from bookings)
+- [ ] Service records restricted to Fleet Manager role
+- [ ] Status transitions enforce the correct sequence (Planned → In Progress → Completed)
+- [ ] Open-ended agreements correctly use far-future fallback for conflict detection
+- [ ] Inactive vehicles excluded from usage profiling
+
+---
+
+## 7. Domain-Level Acceptance Criteria
 
 - [ ] Usage profile updated daily for all active vehicles
 - [ ] Profile classification matches the 5-tier table
@@ -245,7 +331,7 @@ The important thing here is that the calendar **never discloses the reason** for
 
 ---
 
-## 7. Estimated Effort
+## 8. Estimated Effort
 
 | Layer | Effort |
 |---|---|

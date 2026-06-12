@@ -473,7 +473,106 @@ Every Flutter feature needs a data layer: model classes that define the shape of
 
 ---
 
-## 7. Domain-Level Acceptance Criteria
+## 7. Cross-Cutting Concerns
+
+### 7.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `get_vehicle_detail` API | `INFO` | Asset name requested, caller role, response size, cache hit/miss, execution time |
+| `get_vehicle_detail` — VIN stripping | `DEBUG` | Confirmation that VIN was excluded from Customer-role response |
+| `get_maintenance_schedule` API | `INFO` | Asset name, caller role, window count returned, execution time |
+| `submit_vehicle_booking` API | `INFO` | Asset name, customer email, license expiry, driver age, validation result (pass/fail) |
+| `submit_vehicle_booking` — validation failure | `WARNING` | Failure reason (expired license, underage, maintenance conflict), customer email, asset name |
+| Vehicle Category delete attempt | `WARNING` | Category name, linked vehicle count, delete blocked |
+| `setup.py` custom field injection | `INFO` | Fields injected, target DocTypes, success/failure per field |
+| `VehicleAsset` override validation | `DEBUG` | Validation result for plate/VIN/category checks |
+| Web catalog AJAX filter | `INFO` | Filter params received, result count, execution time |
+
+**Acceptance Criteria**:
+- [ ] All API endpoints log request parameters, result counts, and execution time
+- [ ] Booking validation failures logged at `WARNING` with full context (asset, user, failure reason)
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] No sensitive data (VIN, license numbers, personal DOB) appears in logs
+- [ ] VIN stripping is logged at `DEBUG` level for audit confirmation
+
+---
+
+### 7.2 Caching
+
+Frequently accessed data should be cached to avoid redundant database queries on high-traffic catalog pages:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Vehicle catalog results | `vehicle_catalog:{filter_hash}` | 5 min | Any Rental Asset status change, Vehicle Category update |
+| Vehicle Category list (for filter sidebar) | `vehicle_categories:all` | 30 min | Vehicle Category create/update/delete |
+| Vehicle detail response | `vehicle_detail:{asset_name}` | 10 min | Rental Asset save |
+| Maintenance schedule windows (for calendar) | `maint_schedule:{asset_name}` | 15 min | Vehicle Maintenance Schedule status change |
+| Fuel type / transmission distinct values | `vehicle_filters:distinct` | 60 min | Rental Asset create with `asset_type=Vehicle` |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). Cache warming happens on first request. Invalidation uses `doc_events` hooks on `Rental Asset`, `Vehicle Category`, and `Vehicle Maintenance Schedule` to clear relevant keys.
+
+**Acceptance Criteria**:
+- [ ] Catalog API caches results by filter hash; repeated identical queries hit Redis
+- [ ] Vehicle Category list is cached and invalidated on category CRUD
+- [ ] Vehicle detail response cached per asset name; invalidated on asset save
+- [ ] Maintenance schedule cache invalidated when schedule status changes
+- [ ] Cache TTLs are configurable via `Rental Configuration` fields
+
+---
+
+### 7.3 Rate Limiting
+
+Public-facing and customer-facing APIs must be rate-limited to prevent abuse:
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| Web catalog `/rentals/vehicles` | 30 req/min | Per IP (guest) / Per user (auth) | HTTP 429 with `Retry-After` header |
+| `get_vehicle_detail` API | 60 req/min | Per IP (guest) / Per user (auth) | HTTP 429 with `Retry-After` header |
+| `get_maintenance_schedule` API | 30 req/min | Per user (auth) | HTTP 429 with `Retry-After` header |
+| `submit_vehicle_booking` API | 10 req/min | Per user (auth) | HTTP 429 with `Retry-After` header |
+
+**Implementation**: Enforce via Frappe's `frappe.rate_limiter.rate_limit()` decorator on whitelisted methods. For portal pages, use Nginx `limit_req_zone` at the reverse proxy layer. Booking endpoint has a tighter limit (10/min) to prevent automated booking abuse.
+
+**Acceptance Criteria**:
+- [ ] Catalog and detail endpoints rate-limited per table above
+- [ ] Booking endpoint limited to 10 req/min per authenticated user
+- [ ] Exceeding limit returns HTTP 429 with `Retry-After` header and friendly error message
+- [ ] Rate limit logging at `WARNING` level when thresholds are approached (80%+)
+
+---
+
+### 7.4 Security Validation
+
+Input validation and data sanitization at every entry point:
+
+| Check | Location | Rule |
+|---|---|---|
+| `asset_type` filter | Catalog API, detail API | Only `Vehicle` type assets returned; reject invalid `asset_type` values |
+| VIN exclusion | `get_vehicle_detail` | Explicitly strip VIN from response for Customer role; assertion test in AC |
+| Numeric filter bounds | Catalog API | `min_seats`, `max_price` must be non-negative numbers; reject NaN/Infinity |
+| SQL injection prevention | Catalog filter SQL | Use parameterized queries only (no raw string interpolation) |
+| License expiry validation | `submit_vehicle_booking` | Server-side validation: `license_expiry >= rental_end_date` (cannot be bypassed) |
+| Age validation | `submit_vehicle_booking` | Server-side validation: `driver_age >= category.min_driver_age` (cannot be bypassed) |
+| XSS prevention | All web templates | All user-supplied values rendered via Jinja auto-escaping |
+| CSRF protection | Booking AJAX handler | Use `frappe.call()` which auto-injects CSRF token |
+| Maintenance schedule role-gate | `get_maintenance_schedule` | Customer response strips `service_type`, `technician`, `notes` |
+| Plate number uniqueness | `VehicleAsset` override | DB-level `UNIQUE` constraint on `custom_plate_number` |
+| VIN uniqueness | `VehicleAsset` override | DB-level `UNIQUE` constraint on `custom_vin` |
+
+**Acceptance Criteria**:
+- [ ] VIN verified absent from all Customer-role API responses via automated tests
+- [ ] Negative or invalid numeric filter values are rejected with HTTP 400
+- [ ] License and age validations run server-side regardless of client-side checks
+- [ ] All Jinja templates use auto-escaping for user-supplied values
+- [ ] Plate number and VIN uniqueness enforced at DB level (not just application logic)
+- [ ] Maintenance schedule detail fields stripped for non-Fleet Manager roles
+
+---
+
+## 8. Domain-Level Acceptance Criteria
 
 - [ ] Vehicle Category CRUD works for Fleet Manager
 - [ ] Custom fields appear on Rental Asset only for Vehicle type
@@ -487,7 +586,7 @@ Every Flutter feature needs a data layer: model classes that define the shape of
 
 ---
 
-## 8. Estimated Effort
+## 9. Estimated Effort
 
 | Layer | Effort |
 |---|---|

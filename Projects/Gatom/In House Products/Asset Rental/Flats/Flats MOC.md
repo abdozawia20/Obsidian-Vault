@@ -61,6 +61,25 @@ tags: [moc, asset-rental, flats]
 
 ---
 
+## 🔌 Technical Docs
+
+- [[Endpoint Registry|🔌 Endpoint Registry]] — All APIs, scheduler jobs, portal routes, and Flutter routes
+
+---
+
+## 🛠️ Implementation Plans
+
+| # | Domain | Plan | Effort |
+|---|---|---|---|
+| F01 | Property & Unit Registry | [[01 - Property & Unit Registry/implementation-plan\|📋 Plan]] | 8d |
+| F02 | Utility Billing | [[02 - Utility Billing/implementation-plan\|📋 Plan]] | 7d |
+| F03 | Appliance Management | [[03 - Appliance Management/implementation-plan\|📋 Plan]] | 2.5d |
+| F04 | Insurance | [[04 - Insurance/implementation-plan\|📋 Plan]] | 2d |
+| F05 | Flat Inspection | [[05 - Flat Inspection/implementation-plan\|📋 Plan]] | 3.5d |
+| | | **Total** | **23d** |
+
+---
+
 ## 📊 Effort Summary
 
 | # | Domain | Frappe | Web | Flutter | Total |

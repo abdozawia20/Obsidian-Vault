@@ -165,7 +165,86 @@ This is implemented as a **saved filter configuration** on the existing `Rental 
 
 ---
 
-## 5. Domain-Level Acceptance Criteria
+## 5. Cross-Cutting Concerns
+
+### 5.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `validate_vehicle_documents` — registration hard-block | `WARNING` | Vehicle name, expired date, agreement name, user who attempted booking |
+| `validate_vehicle_documents` — insurance soft-alert | `INFO` | Vehicle name, expired date, agreement name, user acknowledged |
+| `alert_registration_expiry` scheduler | `INFO` | Vehicle count scanned, alerts created (30-day / 7-day counts), duplicate alerts skipped |
+| `alert_insurance_expiry` scheduler | `INFO` | Vehicle count scanned, alerts created, duplicates skipped |
+| `alert_roadworthiness_expiry` scheduler | `INFO` | Vehicle count scanned, alerts created, duplicates skipped |
+| Scheduler no-op run (no expiring docs) | `DEBUG` | Confirmation that scheduler ran successfully with no alerts generated |
+| ToDo/email notification creation | `INFO` | Vehicle name, expiry type, recipient Fleet Manager(s), notification method |
+| Dashboard filter query | `DEBUG` | Filter criteria, result count, execution time |
+
+**Acceptance Criteria**:
+- [ ] Registration hard-block events logged at `WARNING` with vehicle + agreement context
+- [ ] Insurance soft-alert acknowledgements logged at `INFO` for audit trail
+- [ ] All scheduler jobs log summary statistics (scanned, alerted, skipped)
+- [ ] Structured logging uses `frappe.logger()` with the `rental_vehicles` namespace
+- [ ] No sensitive insurance policy details (policy numbers, provider names) in general logs
+
+---
+
+### 5.2 Caching
+
+Since this domain is Desk-only with relatively low query volume, caching needs are modest:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Expiry dashboard filter results | `doc_expiry_dashboard:{filter_hash}` | 5 min | Rental Asset save (expiry field change) |
+| Active vehicles list (for scheduler scan) | `active_vehicles:list` | 15 min | Rental Asset status change |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). Invalidation uses `doc_events` hooks on `Rental Asset` to clear expiry-related cache keys when expiry date fields are updated.
+
+**Acceptance Criteria**:
+- [ ] Dashboard filter results cached to reduce repeated DB scans
+- [ ] Cache invalidated when vehicle document expiry dates are updated
+- [ ] Scheduler jobs do NOT rely on cache (always query fresh data for accuracy)
+
+---
+
+### 5.3 Rate Limiting
+
+This domain is entirely Desk-managed with no public-facing or customer-facing endpoints. Rate limiting is handled at the Frappe Desk level:
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| Dashboard filter queries (Desk) | Frappe default | Per user session | Standard Frappe rate limiting |
+| Scheduler jobs | N/A (server-side) | Daily batch | Not applicable |
+
+**Acceptance Criteria**:
+- [ ] No public endpoints exposed (Desk-only domain)
+- [ ] Scheduler jobs protected by Frappe's built-in scheduler lock (prevents parallel execution)
+
+---
+
+### 5.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| `asset_type` filter | Validation hooks | Only `Vehicle` type assets checked; early return for Flat/other types |
+| Null safety | Expiry date checks | Null expiry dates handled gracefully (no block, no alert) — documented edge case |
+| Hard-block bypass prevention | `validate_vehicle_documents` | Registration block cannot be overridden by any role, including System Manager |
+| Scheduler idempotency | All 3 alert schedulers | Duplicate ToDo prevention via vehicle + expiry date combination check |
+| Insurance comment audit | Soft-alert flow | Comment inserted with `ignore_permissions=True` but validated content (no injection) |
+| Dashboard role gate | Expiry dashboard filters | Only Fleet Manager and System Manager can access filtered expiry views |
+
+**Acceptance Criteria**:
+- [ ] Registration hard-block cannot be bypassed by any role
+- [ ] Null expiry dates never cause Python errors (graceful handling with early return)
+- [ ] Scheduler idempotency verified: running twice produces no duplicate alerts
+- [ ] Insurance warning comment content is sanitized (no raw user input in comment body)
+- [ ] Expiry dashboard restricted to Fleet Manager and System Manager roles
+
+---
+
+## 6. Domain-Level Acceptance Criteria
 
 - [ ] Expired registration hard-blocks agreement creation (no override)
 - [ ] Expired insurance shows dismissible warning with audit log
@@ -177,7 +256,7 @@ This is implemented as a **saved filter configuration** on the existing `Rental 
 
 ---
 
-## 6. Estimated Effort
+## 7. Estimated Effort
 
 | Layer | Effort |
 |---|---|

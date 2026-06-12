@@ -95,6 +95,70 @@ Cancellation reverses the submission: the asset returns to `Available` and the E
 
 ---
 
+### 2.4 Agreement Versioning & Amendment Audit
+
+> **Requires**: 2.1 (schema with `track_changes = 1`)
+
+Functional requirement BR-034 states: "Agreement versioning must be maintained — all revisions stored with timestamps." The schema already sets `track_changes = 1` (2.1), which enables Frappe's built-in Version DocType to record every field change automatically. However, this must be **explicitly verified and documented** because developers may not realize it's active.
+
+Frappe's version tracking stores a JSON diff of every field change with the timestamp and user who made the change. This is accessible via the "Activity" tab in Desk. For the customer portal, an API endpoint exposes the version history in a simplified format showing: what changed, when, and who changed it (redacted to role name, not email, for privacy).
+
+One additional constraint applies: **amendment workflow for Active agreements**. If a Rental Manager needs to change an Active agreement (e.g., adjust the monthly rate after negotiation), they must use Frappe's Amend feature rather than direct field editing. This creates a new version with a linked predecessor (`amended_from` field), preserving the original as a read-only record. The new version gets a suffix: `RNT-2026-0001-1`.
+
+**Acceptance Criteria**:
+- [ ] Every field change on a Rental Agreement is recorded in the Version DocType
+- [ ] Version history is visible in the Desk "Activity" tab
+- [ ] API endpoint `get_agreement_history(agreement_name)` returns simplified version list
+- [ ] Version entries include: changed fields, old values, new values, timestamp, user role
+- [ ] Active agreements require Amend workflow (not direct edit)
+- [ ] Amended agreement links back to original via `amended_from`
+- [ ] Customer portal shows version history in read-only format (no raw JSON)
+
+---
+
+### 2.5 Additional Charges — Subscription Injection
+
+> **Requires**: 2.1 (additional_charges child table), D06-2.1 (subscription factory)
+
+The `additional_charges` child table on the Rental Agreement (2.1) allows operators to add **recurring line items** beyond the base rent — parking fees, utility flat-rates, insurance surcharges, pet deposits, etc. These charges must flow through to the ERPNext Subscription so they appear on **every recurring invoice** alongside the base rent.
+
+When the agreement is submitted (`on_submit`, 2.2), the subscription factory must iterate over the `additional_charges` table and add each as a Subscription Plan Detail line item on the ERPNext Subscription. Each charge has:
+- `charge_description` (Data, required): e.g., "Covered Parking"
+- `charge_amount` (Currency, required): e.g., 200 AED
+- `charge_frequency` (Select): `Per Invoice` (default) or `One-Time` (first invoice only)
+
+Child apps use this mechanism to inject variant-specific charges. For example, `rental_flats` hooks into `Rental Agreement.on_update` to auto-populate a "Utility Package" charge based on the flat's configured utility tier. `rental_vehicles` might inject an "Insurance Surcharge" based on vehicle class.
+
+The base module only defines the schema and subscription injection logic — it does NOT decide what charges to add. That's the child app's responsibility.
+
+```python
+# In subscription_factory.py
+def _build_plan_items(agreement):
+    items = [{
+        "item": "Base Rent",
+        "qty": 1,
+        "rate": agreement.monthly_rate,
+    }]
+    for charge in agreement.additional_charges:
+        items.append({
+            "item": charge.charge_description,
+            "qty": 1,
+            "rate": charge.charge_amount,
+        })
+    return items
+```
+
+**Acceptance Criteria**:
+- [ ] `Additional Charge` child table on Rental Agreement has: `charge_description`, `charge_amount`, `charge_frequency`
+- [ ] `on_submit` passes all additional charges to the subscription factory
+- [ ] Each charge appears as a separate line item on the generated Sales Invoice
+- [ ] `One-Time` charges appear only on the first invoice (not recurring)
+- [ ] `Per Invoice` charges appear on every recurring invoice
+- [ ] Removing a charge from the agreement (via Amend) stops it from appearing on future invoices
+- [ ] Child apps can inject charges via `doc_events` hook without modifying base code
+
+---
+
 ## 3. Frappe — Self-Cancellation API
 
 ### 3.1 `cancel_booking_request` Endpoint
@@ -259,6 +323,42 @@ Accepts a **base64-encoded signature image** from the client and stores it on th
 
 ---
 
+### 7.4 Booking Audit Log
+
+> **Requires**: 7.1 (submit_booking_request)
+
+Every call to `submit_booking_request` — whether successful or not — must be logged for **analytics and debugging**. Failed booking attempts (asset unavailable, KYC blocked, rate limited, validation error) are especially valuable because they represent lost revenue and help identify friction points in the booking funnel.
+
+The log uses Frappe's built-in `frappe.logger("booking")` which writes to `{bench}/logs/booking.log`. Each entry includes: timestamp, customer, asset, outcome (success/failure), failure reason (if any), and request duration.
+
+```python
+import time
+
+@frappe.whitelist()
+def submit_booking_request(asset_name, start_date, end_date, **kwargs):
+    start = time.time()
+    logger = frappe.logger("booking")
+    try:
+        result = _process_booking(asset_name, start_date, end_date, **kwargs)
+        logger.info(f"BOOKING_SUCCESS customer={frappe.session.user} asset={asset_name} "
+                    f"agreement={result['agreement_name']} duration={time.time()-start:.2f}s")
+        return result
+    except Exception as e:
+        logger.warning(f"BOOKING_FAILED customer={frappe.session.user} asset={asset_name} "
+                       f"reason={str(e)} duration={time.time()-start:.2f}s")
+        raise
+```
+
+**Acceptance Criteria**:
+- [ ] Successful booking logs `BOOKING_SUCCESS` with agreement name
+- [ ] Failed booking logs `BOOKING_FAILED` with failure reason
+- [ ] Log includes customer, asset, and duration for each attempt
+- [ ] Logs written to `{bench}/logs/booking.log` (not the database — avoid write amplification)
+- [ ] KYC-blocked attempts logged with reason "KYC Required"
+- [ ] Concurrency conflict logged with reason "Asset unavailable"
+
+---
+
 ## 8. Web — Booking Form (5-Step)
 
 ### 8.1 Controller `www/rentals/{asset}/book.py`
@@ -333,6 +433,45 @@ A **freehand drawing canvas** where the customer draws their signature with a mo
 - [ ] "Clear" button resets the canvas
 - [ ] Produces non-empty base64 string on "Done"
 - [ ] Empty canvas → "Next" is disabled
+
+---
+
+### 8.6 Variant-Aware Booking Step Injection (Web)
+
+> **Requires**: 8.2 (step wizard), D01-2.4 (extension hook architecture)
+
+Some asset types require **additional booking steps** that the base module doesn't know about. For example, `rental_vehicles` needs a driving license upload and age verification step (minimum driver age varies by vehicle class). `rental_flats` might need a move-in date preference or furnishing selection step.
+
+Rather than hardcoding variant-specific steps, the booking wizard supports **dynamic step injection**. The base defines 5 core steps (dates, details, kyc, sign, confirm). Child apps register additional steps by hooking into a `get_booking_steps` API endpoint. The booking page calls this endpoint on load and inserts any additional steps between the "details" step (2) and the "kyc" step (3).
+
+Each injected step is defined by the child app as:
+- `step_id` (string): unique identifier (e.g., `vehicle_license`)
+- `step_label` (string): displayed in the step indicator (e.g., "Driving License")
+- `template_path` (string): path to the child app's HTML template for the step content
+- `validation_method` (string): dotted path to the child app's server-side validation function
+
+The base wizard renders injected steps using the provided template and calls the validation method before allowing forward navigation. This way, the base booking.js never imports child app code — it dynamically loads what's needed.
+
+```javascript
+async function loadSteps(assetType) {
+  const resp = await frappe.call({
+    method: 'rental_core.api.booking.get_booking_steps',
+    args: { asset_type: assetType },
+  });
+  const injected = resp.message || [];
+  STEPS.splice(2, 0, ...injected.map(s => s.step_id));
+  injected.forEach(s => loadTemplate(s.step_id, s.template_path));
+}
+```
+
+**Acceptance Criteria**:
+- [ ] `get_booking_steps` API returns empty list when no child app registers steps
+- [ ] Vehicle booking includes a "Driving License" step between details and KYC
+- [ ] Flat booking includes no additional steps (unless child app registers one)
+- [ ] Step indicator updates to show correct total (e.g., 6/6 instead of 5/5)
+- [ ] Injected step template renders correctly within the wizard
+- [ ] Injected step validation is called before advancing
+- [ ] Base booking.js does NOT import or reference child app JavaScript
 
 ---
 
@@ -496,6 +635,26 @@ A dedicated screen showing the **full details** of a single agreement: the asset
 - [ ] Shows agreement details: asset, dates, rate, status
 - [ ] PDF download button when `agreement_pdf_url` is set
 - [ ] Deposit status section (data from D08 enhanced API)
+
+---
+
+### 12.6 Variant-Aware Booking Step Injection (Flutter)
+
+> **Requires**: 11.2 (step screens), D01-2.4 (extension hook architecture)
+
+The Flutter counterpart to the web's variant step injection (8.6). The booking flow's step list is not hardcoded to 5 — it dynamically queries the `get_booking_steps` API on entering the flow. Any steps returned by child apps are inserted between Step 2 (details) and Step 3 (kyc).
+
+Each injected step is a URL pointing to a **child app-provided screen widget**. The base app uses Flutter's `Navigator` to push the injected step screen by its registered route. The child app registers its step screen as a GoRouter sub-route under `/book/`. For example, `rental_vehicles` registers `/book/vehicle-license` which renders a license upload screen.
+
+The `BookingNotifier` (11.1) holds a `List<BookingStep>` that includes both base and injected steps. Each step has a `stepId`, `label`, and `isValid` flag. The notifier exposes `currentStep`, `totalSteps`, and `canAdvance` getters that account for injected steps.
+
+**Acceptance Criteria**:
+- [ ] Step count dynamically adjusts based on `get_booking_steps` response
+- [ ] Injected steps render between Step 2 (details) and Step 3 (kyc)
+- [ ] Step indicator shows correct total (e.g., "3 of 6" not "3 of 5")
+- [ ] Back navigation through injected steps preserves data
+- [ ] Auto-save (11.3) includes injected step data
+- [ ] Base Flutter code does NOT import child app packages
 
 ---
 

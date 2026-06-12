@@ -795,7 +795,86 @@ GoRoute(
 
 ---
 
-## 12. Domain-Level Acceptance Criteria
+## 12. Cross-Cutting Concerns
+
+### 12.1 Logging
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `validate()` — consumption computation | `INFO` | Flat, meter type, previous reading, current reading, consumption, total charge |
+| `validate()` — first reading (zero consumption) | `WARNING` | Flat, meter type: "First reading — baseline set, zero consumption" |
+| `inject_reading_into_invoice()` — success | `INFO` | Reading name, invoice name, line item amount |
+| `inject_reading_into_invoice()` — no draft invoice | `DEBUG` | Reading name, agreement: "No draft invoice — reading stays unbilled" |
+| `sweep_unbilled_utilities()` | `INFO` | Agreement, invoice, count of readings swept, total amount |
+| `submit_meter_reading` API | `INFO` | User, agreement, meter type, computed charge |
+| `get_utility_history` API | `INFO` | User, agreement, result count |
+| `get_utility_history` — access denied | `WARNING` | Attempted user, target agreement: "Customer isolation violation" |
+| Scheduler — `remind_utility_meter_readings` | `INFO` | Count of reminders sent, agreements without readings |
+| Scheduler — `alert_missing_readings` | `WARNING` | Agreements with missing readings and specific missing meter types |
+
+**Acceptance Criteria**:
+- [ ] All billing pipeline operations log at `INFO` or higher with full context
+- [ ] Customer isolation violations log at `WARNING` with the offending user
+- [ ] Structured logging uses `frappe.logger("rental_flats.utility_billing")`
+- [ ] No raw meter readings or photo URLs in log output
+
+---
+
+### 12.2 Caching
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Utility rate config (per-unit rates) | `utility_rates` | 60 min | `Rental Configuration` save |
+| Utility history (customer-facing) | `utility_history:{agreement}:{meter_type}` | 5 min | Utility Meter Reading submit |
+| Last reading for flat + meter type | `last_reading:{flat}:{meter_type}` | 0 (always fresh) | N/A — always queried live for billing accuracy |
+
+> [!IMPORTANT]
+> Utility rate lookups (`electricity_rate_per_unit`, etc.) happen on every reading submission. Caching the `Rental Configuration` singleton avoids N+1 queries when processing batch readings.
+
+**Acceptance Criteria**:
+- [ ] Rate config is cached and invalidated when `Rental Configuration` is saved
+- [ ] Customer utility history is cached per agreement+meter and cleared on new reading submission
+- [ ] `previous_reading` is NEVER cached — always queried live to ensure billing accuracy
+
+---
+
+### 12.3 Rate Limiting
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| `get_utility_history` | 20 req/min | Per user session | HTTP 429 with `Retry-After` |
+| `submit_meter_reading` | 60 req/min | Per user session | HTTP 429 with `Retry-After` |
+| `/my-utilities` portal page | 30 req/min | Per IP | HTTP 429 |
+
+**Acceptance Criteria**:
+- [ ] Customer utility API rate-limited to 20 req/min per user
+- [ ] Staff submission API rate-limited to 60 req/min per user
+- [ ] Portal page rate-limited at Nginx layer to 30 req/min per IP
+
+---
+
+### 12.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Customer isolation | `get_utility_history` | Server-side filter: only readings for agreements owned by `frappe.session.user`; other customer's agreement → HTTP 403 |
+| Role enforcement | `submit_meter_reading` | Only `Property Manager` / `System Manager` role; Customer → HTTP 403 |
+| Input validation | `submit_meter_reading` | `current_reading` must be non-negative float; `meter_type` must be in (`Electricity`, `Water`, `Gas`) |
+| Negative consumption guard | `validate()` | If `consumption < 0`, log `WARNING` and set to 0 (meter rollover or data entry error) |
+| Guest blocking | `/my-utilities` portal | Guest users redirected to `/login?redirect-to=/my-utilities` |
+| Invoice integrity | `inject_reading_into_invoice` | Only append to draft (`docstatus = 0`) invoices — never modify submitted invoices |
+| Raw reading exclusion | `get_utility_history` | `previous_reading`, `current_reading`, `reading_photo` excluded from customer response |
+
+**Acceptance Criteria**:
+- [ ] Customer accessing another customer's agreement → HTTP 403
+- [ ] Non-PM/SM user calling `submit_meter_reading` → HTTP 403
+- [ ] Invalid meter type → HTTP 400 with descriptive error
+- [ ] Negative consumption is caught, logged, and set to 0
+- [ ] Reading photo never returned in customer-facing API
+
+---
+
+## 13. Domain-Level Acceptance Criteria
 
 - [ ] Staff submits meter reading → consumption and charge computed correctly
 - [ ] Reading injected into draft invoice as line item
@@ -809,7 +888,7 @@ GoRoute(
 
 ---
 
-## 13. Estimated Effort
+## 14. Estimated Effort
 
 | Layer | Effort |
 |---|---|

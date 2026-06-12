@@ -42,7 +42,7 @@ bench --site rental.localhost install-app rental_flats
 
 > **Requires**: 2.1
 
-Frappe's `hooks.py` is the app's central wiring file — it tells the framework what background jobs to run, what events to listen for, and what portal pages to expose. This subtask registers **4 daily scheduler jobs** (utility reminders, warranty alerts, inspection checks, insurance expiry), **1 doc_event** (insurance validation fires whenever a Rental Agreement is submitted), and **1 portal menu item** ("Utility Usage" link in the customer sidebar).
+Frappe's `hooks.py` is the app's central wiring file — it tells the framework what background jobs to run, what events to listen for, and what portal pages to expose. This subtask registers **6 daily scheduler jobs** (utility reminders, missing reading escalation, warranty alerts, inspection checks, insurance expiry alerts, insurance auto-expiry), **1 doc_event** (insurance validation fires whenever a Rental Agreement is submitted), and **1 portal menu item** ("Utility Usage" link in the customer sidebar).
 
 ```python
 required_apps = ["frappe", "erpnext", "rental_core"]
@@ -50,9 +50,11 @@ required_apps = ["frappe", "erpnext", "rental_core"]
 scheduler_events = {
     "daily": [
         "rental_flats.scheduler_events.remind_utility_meter_readings",
+        "rental_flats.scheduler_events.alert_missing_readings",
         "rental_flats.scheduler_events.alert_appliance_warranty_expiry",
         "rental_flats.scheduler_events.check_flat_annual_inspection_due",
         "rental_flats.scheduler_events.alert_insurance_expiry",
+        "rental_flats.scheduler_events.update_expired_insurance_policies",
     ],
 }
 
@@ -69,7 +71,7 @@ portal_menu_items = [
 ```
 
 **Acceptance Criteria**:
-- [ ] 4 daily scheduler events registered
+- [ ] 6 daily scheduler events registered
 - [ ] `validate` event on `Rental Agreement` fires the insurance validator
 - [ ] "Utility Usage" appears in portal sidebar for Customer role
 - [ ] "Utility Usage" does NOT appear in portal when `rental_flats` is uninstalled
@@ -1060,7 +1062,98 @@ GoRoute(path: '/floor-plan', builder: (_, s) => FloorPlanViewerScreen(url: s.uri
 
 ---
 
-## 15. Domain-Level Acceptance Criteria
+## 15. Cross-Cutting Concerns
+
+### 15.1 Logging
+
+All critical decision points in this domain must emit structured log entries for auditability and debugging:
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `get_flat_catalog` API | `INFO` | Filter params received, result count, execution time |
+| `get_flat_detail` API | `INFO` | Asset name requested, response size, cache hit/miss |
+| `get_flat_detail` — access code stripping | `DEBUG` | Confirmation that `custom_access_code` was excluded from response |
+| Hierarchy validation (`validate_flat_links`) | `WARNING` | When a flat is saved without a building link, or a building without a property |
+| Occupancy rate computation | `DEBUG` | Building/Property name, total units, occupied units, computed percentage |
+| `setup.py` custom field injection | `INFO` | Fields injected, target DocTypes, success/failure |
+| SEO `schema.org` rendering | `DEBUG` | Asset name, structured data generated |
+
+**Acceptance Criteria**:
+- [ ] All API endpoints log request parameters, result counts, and execution time
+- [ ] Error paths log at `WARNING` or `ERROR` level with full context (asset name, user, timestamp)
+- [ ] Structured logging uses `frappe.logger()` with the `rental_flats` namespace
+- [ ] No sensitive data (access codes, personal info) appears in logs
+
+---
+
+### 15.2 Caching
+
+Frequently accessed data should be cached to avoid redundant database queries on high-traffic pages:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Flat catalog results | `flat_catalog:{filter_hash}` | 5 min | Any Rental Asset status change |
+| Building amenity list (for filter sidebar) | `building_amenities:all` | 30 min | Building Amenity create/delete |
+| Flat detail response | `flat_detail:{asset_name}` | 10 min | Rental Asset save |
+| Occupancy rates (Building / Property) | `occupancy:{doc_type}:{name}` | 15 min | Rental Agreement status change |
+| Distinct amenities list (for catalog page) | `amenities:distinct` | 30 min | Building Amenity create/delete |
+
+**Implementation**: Use Frappe's `frappe.cache()` (Redis-backed). Cache warming happens on first request. Invalidation uses `doc_events` hooks on `Rental Asset`, `Rental Agreement`, and `Building Amenity` to clear relevant keys.
+
+**Acceptance Criteria**:
+- [ ] Catalog API caches results by filter hash; repeated identical queries hit Redis
+- [ ] Cache is invalidated when assets are created, updated, or status-changed
+- [ ] Building amenity list is cached and invalidated on amenity create/delete
+- [ ] Occupancy rates are cached per-building and per-property
+- [ ] Cache TTLs are configurable via `Rental Configuration` fields
+
+---
+
+### 15.3 Rate Limiting
+
+Public-facing and customer-facing APIs must be rate-limited to prevent abuse:
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| `get_flat_catalog` | 30 req/min | Per IP (guest) / Per user (auth) | HTTP 429 with `Retry-After` header |
+| `get_flat_detail` | 60 req/min | Per IP (guest) / Per user (auth) | HTTP 429 with `Retry-After` header |
+| Web catalog page `/rentals/flats` | 30 req/min | Per IP | HTTP 429 |
+
+**Implementation**: Enforce via Frappe's `frappe.rate_limiter.rate_limit()` decorator on whitelisted methods. For portal pages, use Nginx `limit_req_zone` at the reverse proxy layer.
+
+**Acceptance Criteria**:
+- [ ] `get_flat_catalog` rate-limited to 30 req/min per IP
+- [ ] `get_flat_detail` rate-limited to 60 req/min per IP
+- [ ] Exceeding limit returns HTTP 429 with `Retry-After` header and friendly error message
+- [ ] Rate limit logging at `WARNING` level when thresholds are approached (80%+)
+
+---
+
+### 15.4 Security Validation
+
+Input validation and data sanitization at every entry point:
+
+| Check | Location | Rule |
+|---|---|---|
+| `asset_type` filter | `get_flat_catalog`, `get_flat_detail` | Only `Flat` type assets returned; reject invalid `asset_type` values |
+| Numeric filter bounds | `get_flat_catalog` | `min_area`, `max_area`, `max_price`, `bedrooms` must be non-negative numbers; reject NaN/Infinity |
+| SQL injection prevention | Amenity filter SQL | Use parameterized queries only (already implemented with `%(amenities)s`) |
+| `custom_access_code` exclusion | `get_flat_detail` | Explicitly `pop('custom_access_code')` from response dict; assertion test in AC |
+| `serial_number` exclusion | `get_flat_detail` | Strip `serial_number` from appliance child rows before returning |
+| XSS prevention | All web templates | All user-supplied values rendered via Jinja auto-escaping (default in Frappe templates) |
+| CSRF protection | AJAX filter handler | Use `frappe.call()` which auto-injects CSRF token |
+| Floor plan URL | Detail page + API | Validate URL format; serve via signed CDN URL with short expiry if configured |
+
+**Acceptance Criteria**:
+- [ ] Negative or invalid numeric filter values are rejected with HTTP 400
+- [ ] Amenity filter uses parameterized queries (no raw string interpolation in SQL)
+- [ ] `custom_access_code` and `serial_number` are verified absent from all API responses via automated tests
+- [ ] All Jinja templates use auto-escaping for user-supplied values
+- [ ] Floor plan URLs are validated before rendering (no open redirect)
+
+---
+
+## 16. Domain-Level Acceptance Criteria
 
 - [ ] Property → Building → Flat hierarchy enforced (validation errors on missing links)
 - [ ] Occupancy rate computed correctly at Building and Property level
@@ -1073,7 +1166,7 @@ GoRoute(path: '/floor-plan', builder: (_, s) => FloorPlanViewerScreen(url: s.uri
 
 ---
 
-## 16. Estimated Effort
+## 17. Estimated Effort
 
 | Layer | Effort |
 |---|---|

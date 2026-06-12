@@ -271,7 +271,81 @@ These are architectural constraints that apply across all insurance-related code
 
 ---
 
-## 8. Domain-Level Acceptance Criteria
+## 8. Cross-Cutting Concerns
+
+### 8.1 Logging
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `validate_flat_insurance()` — passed | `INFO` | Agreement name, asset, country: "All mandatory coverage present" |
+| `validate_flat_insurance()` — blocked | `WARNING` | Agreement name, asset, country, missing coverage types |
+| `validate_flat_insurance()` — non-flat bypass | `DEBUG` | Agreement name, asset type: "Skipped — not a Flat" |
+| `validate_flat_insurance()` — no config | `DEBUG` | Country: "No mandatory insurance requirements configured" |
+| `_create_insurance_todo()` | `INFO` | ToDo created, assigned to, agreement, missing types |
+| `update_expired_insurance_policies()` | `INFO` | Count of policies auto-expired |
+| `alert_insurance_expiry` — alert sent | `INFO` | Policy name, flat, coverage type, expiry date, days before |
+| `get_flat_insurance_status` API | `INFO` | User, asset queried, result count |
+| `get_flat_insurance_status` — access denied | `WARNING` | User, role: "Unauthorized access attempt to insurance data" |
+
+**Acceptance Criteria**:
+- [ ] Every insurance validation decision is logged with outcome (passed/blocked/skipped)
+- [ ] Blocked agreements log the specific missing coverage types
+- [ ] Structured logging uses `frappe.logger("rental_flats.insurance")`
+- [ ] Policy document URLs are never logged
+
+---
+
+### 8.2 Caching
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Country insurance requirements | `insurance_requirements:{country}` | 60 min | `Rental Configuration` save |
+| Active policies per flat | `insurance_policies:{asset_name}` | 10 min | `Flat Insurance Policy` save/submit |
+
+> [!NOTE]
+> Country insurance requirements rarely change but are queried on every agreement submission. Caching avoids loading the full `Rental Configuration` singleton for each validation.
+
+**Acceptance Criteria**:
+- [ ] Country requirements cached per country code
+- [ ] Active policies cached per flat and invalidated on policy save
+- [ ] Cache invalidated when `Rental Configuration` insurance requirements are changed
+
+---
+
+### 8.3 Rate Limiting
+
+| Endpoint | Limit | Scope | Response on Limit |
+|---|---|---|---|
+| `get_flat_insurance_status` | 30 req/min | Per user session | HTTP 429 with `Retry-After` |
+
+> [!NOTE]
+> This is an internal-only API. Rate limiting protects against automated tooling querying insurance status for all flats in bulk.
+
+**Acceptance Criteria**:
+- [ ] Internal insurance API rate-limited to 30 req/min per user session
+- [ ] Exceeding limit returns HTTP 429
+
+---
+
+### 8.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Role enforcement | `get_flat_insurance_status` | Only `Property Manager` / `Rental Manager` / `System Manager`; Customer → HTTP 403 |
+| Customer invisibility | All layers | Insurance data never appears in any customer-facing API, web page, or Flutter screen |
+| Policy document exclusion | `get_flat_insurance_status` | `policy_document` URL excluded from API response (Desk-only) |
+| Agreement integrity | `validate_flat_insurance()` | Validator only checks at submission time — does NOT retroactively suspend active agreements |
+| ToDo deduplication | `_create_insurance_todo()` | Check for existing open ToDo with same agreement + coverage before creating new |
+
+**Acceptance Criteria**:
+- [ ] Customer role can never access insurance DocType or API
+- [ ] Policy document (scanned PDF) never returned in any API response
+- [ ] Insurance validator does not modify existing active agreements
+- [ ] ToDo creation is idempotent — no duplicates for same agreement + missing coverage
+
+---
+
+## 9. Domain-Level Acceptance Criteria
 
 - [ ] Agreement submit for flat with all mandatory insurance → succeeds
 - [ ] Agreement submit for flat with missing mandatory insurance → blocked with descriptive error
@@ -283,7 +357,7 @@ These are architectural constraints that apply across all insurance-related code
 
 ---
 
-## 9. Estimated Effort
+## 10. Estimated Effort
 
 | Layer | Effort |
 |---|---|

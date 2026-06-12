@@ -217,7 +217,64 @@ class ApplianceTile extends StatelessWidget {
 
 ---
 
-## 6. Domain-Level Acceptance Criteria
+## 6. Cross-Cutting Concerns
+
+### 6.1 Logging
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `update_appliance_conditions()` | `INFO` | Inspection name, asset, count of appliances updated, conditions changed |
+| `update_appliance_conditions()` — unmatched item | `DEBUG` | Checklist item name that didn't match any appliance (expected for fixtures) |
+| `alert_appliance_warranty_expiry` — alert sent | `INFO` | Appliance name, asset, warranty expiry date, manager notified |
+| `alert_appliance_warranty_expiry` — skipped (no warranty) | `DEBUG` | Count of appliances without warranty dates |
+| Warranty ToDo creation | `INFO` | ToDo created for appliance, asset, manager |
+
+**Acceptance Criteria**:
+- [ ] Condition sync operations log which appliances were updated and their old → new condition
+- [ ] Warranty alerts log each notification sent with full context
+- [ ] Structured logging uses `frappe.logger("rental_flats.appliance_mgmt")`
+
+---
+
+### 6.2 Caching
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Appliance list (customer-safe) | `appliances:{asset_name}` | 10 min | Rental Asset save (appliance child table change) |
+
+> [!NOTE]
+> Appliance data changes infrequently (only on inspection or manual update), so a 10-minute TTL is sufficient. The cache is used by `get_flat_detail` API to avoid reloading the child table on every detail page view.
+
+**Acceptance Criteria**:
+- [ ] Customer-safe appliance list is cached per asset
+- [ ] Cache invalidated when the Rental Asset is saved (covers appliance child table changes)
+
+---
+
+### 6.3 Rate Limiting
+
+This domain has **no public API endpoints** — appliance data is served through `get_flat_detail` (F01) which has its own rate limiting. No additional rate limits needed.
+
+---
+
+### 6.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Serial number exclusion | `get_flat_detail` (F01), web template, Flutter model | `serial_number` is stripped before any customer-facing response |
+| Warranty date exclusion | `get_flat_detail` (F01), web template, Flutter model | `warranty_expiry` and `purchase_date` are stripped from customer responses |
+| Condition value validation | `update_appliance_conditions()` | Condition must be one of: `Excellent`, `Good`, `Fair`, `Damaged`, `Missing` |
+| Idempotency | `alert_appliance_warranty_expiry` | Check for existing ToDo before creating a new one to prevent duplicates |
+
+**Acceptance Criteria**:
+- [ ] `serial_number` never appears in any API response, web template, or Flutter model
+- [ ] `warranty_expiry` visible only in Desk — excluded from customer-facing surfaces
+- [ ] Invalid condition values are rejected during inspection submission
+- [ ] Warranty alert scheduler is idempotent (no duplicate ToDos)
+
+---
+
+## 7. Domain-Level Acceptance Criteria
 
 - [ ] Appliances tracked per flat with all required fields
 - [ ] Condition updated after each entry/exit inspection
@@ -228,7 +285,7 @@ class ApplianceTile extends StatelessWidget {
 
 ---
 
-## 7. Estimated Effort
+## 8. Estimated Effort
 
 | Layer | Effort |
 |---|---|

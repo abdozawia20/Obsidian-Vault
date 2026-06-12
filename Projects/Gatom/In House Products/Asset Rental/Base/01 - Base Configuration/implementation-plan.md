@@ -503,6 +503,166 @@ Every API endpoint that returns a list of records (assets, agreements, invoices,
 
 ---
 
+### 6.3 Rate Limiting Middleware
+
+> **Requires**: 6.1 (error envelope must support HTTP 429)
+
+Several API endpoints are vulnerable to abuse if left unthrottled — particularly the registration endpoint (brute-force account creation), the login endpoint (credential stuffing), the inquiry form (spam), and the booking submission (reservation flooding). Without rate limiting, the platform defines HTTP 429 in its error contract (6.1) but never actually produces it.
+
+Rate limiting is implemented as a **Frappe before_request hook** that checks the caller's IP address and user session against a per-endpoint counter stored in Redis (Frappe's cache backend). Each endpoint category has its own threshold:
+
+**Rate Limit Registry** — every endpoint in the platform and its threshold:
+
+| Endpoint | Limit | Window | Scope | Domain |
+|---|---|---|---|---|
+| `register_customer` | 5 | per hour | per IP | D01-7.8 |
+| `login` | 10 | per 15 min | per IP | Frappe built-in |
+| `guest_inquiry` | 3 | per 10 min | per IP | D02-4.1 |
+| `get_available_assets` | 60 | per minute | per IP | D04-7.1 |
+| `get_asset_detail` | 60 | per minute | per IP | D04-7.2 |
+| `get_asset_availability` | 60 | per minute | per IP | D04-7.3 |
+| `get_featured_assets` | 60 | per minute | per IP | D04-7.4 |
+| `payment_webhook` | 100 | per minute | per IP | D06-6.1 |
+| `submit_kyc_documents` | 10 | per minute | per user | D03-4.2 |
+| `submit_booking_request` | 5 | per minute | per user | D05-7.1 |
+| `cancel_booking_request` | 3 | per minute | per user | D05-3.1 |
+| `get_invoice_payment_url` | 10 | per minute | per user | D06-7.2 |
+| `dispute_deposit_deduction` | 5 | per minute | per user | D06-7.4 |
+| `register_fcm_token` | 10 | per minute | per user | D07-6.3 |
+| All other authenticated APIs | 60 | per minute | per user | — |
+
+When a limit is exceeded, the middleware returns HTTP 429 with the standard error envelope (6.1) and a `Retry-After` header indicating how many seconds the caller must wait.
+
+```python
+def rate_limit(endpoint, max_requests, window_seconds, scope="user"):
+    key = f"rate_limit:{endpoint}:{get_scope_key(scope)}"
+    current = frappe.cache().get(key) or 0
+    if current >= max_requests:
+        frappe.local.response.headers["Retry-After"] = str(window_seconds)
+        frappe.throw(_("Too many requests. Please try again later."),
+                     exc=frappe.TooManyRequestsError)
+    frappe.cache().set(key, current + 1, expires_in_sec=window_seconds)
+```
+
+**Acceptance Criteria**:
+- [ ] Registration endpoint returns HTTP 429 after 5 calls from the same IP within 1 hour
+- [ ] Login endpoint returns HTTP 429 after 10 calls from the same IP within 15 minutes
+- [ ] Inquiry form returns HTTP 429 after 3 calls from the same IP within 10 minutes
+- [ ] `payment_webhook` endpoint returns HTTP 429 after 100 calls from the same IP within 1 minute
+- [ ] All 429 responses include `Retry-After` header with seconds remaining
+- [ ] All 429 responses match the standard error envelope (6.1)
+- [ ] Rate limit counters are stored in Redis (Frappe cache), not the database
+- [ ] Different users/IPs have independent counters (no cross-contamination)
+- [ ] Rate limit registry table covers all 15 endpoint categories listed above
+
+---
+
+### 6.4 API Security Checklist
+
+> **Requires**: 6.1 (error envelope), 6.3 (rate limiting)
+
+A cross-cutting security standard that **every API endpoint** in the platform must satisfy. This is not a separate subtask per domain — it's a checklist that domain developers apply when implementing any `@frappe.whitelist()` endpoint. The checklist is enforced during code review.
+
+**Mandatory for all endpoints**:
+
+1. **Authorization check**: Every endpoint that returns or modifies a document must verify ownership via `frappe.has_permission(doctype, "read", doc=name)` or equivalent. Never trust the `name` parameter alone — an attacker could guess another customer's document name (IDOR prevention).
+
+2. **Input sanitization**: All text inputs that are displayed back to users (rejection reasons, damage notes, chat messages, inquiry bodies) must be escaped via `frappe.utils.escape_html()` before storage. This prevents stored XSS.
+
+3. **File upload validation**: All file upload endpoints (KYC documents D03-4.2, bank transfer receipts D06-8.3, inspection photos D04-3.1) must validate:
+   - MIME type against an allowlist: `image/jpeg`, `image/png`, `application/pdf`
+   - File size against a maximum: 10 MB per file (configurable in Rental Configuration)
+   - File extension matches MIME type (prevent `.php` disguised as `.jpg`)
+
+4. **SQL injection prevention**: All database queries must use Frappe's parameterized query API (`frappe.get_all()`, `frappe.db.get_value()`) — never raw SQL string concatenation. The `LIKE` operator in catalog filters (D04-4.3) must sanitize `%` and `_` in user input.
+
+5. **Rate limiting**: Every endpoint must be listed in the rate limit registry (§6.3). Unlisted endpoints inherit the default rate (60/min/user).
+
+**Acceptance Criteria**:
+- [ ] Code review checklist document created and linked in project README
+- [ ] All existing endpoints audited against the 5 rules above
+- [ ] D06-7.3 (`get_deposit_status`) includes explicit ownership check: requesting user must be the `customer` on the linked agreement
+- [ ] D03-4.2 (`submit_kyc_documents`) validates MIME type: only `image/jpeg`, `image/png`, `application/pdf` accepted
+- [ ] D06-8.3 (bank transfer upload) validates MIME type: same allowlist
+- [ ] D04-4.3 catalog filter sanitizes `%` and `_` in location search input
+
+---
+
+### 6.5 API Endpoint Registry
+
+> **Requires**: All domains (D01–D08)
+
+A centralized reference of **every API endpoint** exposed by the `rental_core` app. This registry ensures no endpoint is undocumented, unprotected, or missing from the rate limit table. It is maintained as a living document — when a new endpoint is added in any domain, a corresponding row is added here.
+
+#### Public Endpoints (No Authentication Required)
+
+| # | Method | Endpoint | Domain | Description |
+|---|---|---|---|---|
+| P1 | GET | `get_available_assets` | D04-7.1 | Catalog listing with filters |
+| P2 | GET | `get_asset_detail` | D04-7.2 | Single asset detail page data |
+| P3 | GET | `get_asset_availability` | D04-7.3 | Calendar availability for an asset |
+| P4 | GET | `get_featured_assets` | D04-7.4 | Featured assets for home screen |
+| P5 | POST | `guest_inquiry` | D02-4.1 | Anonymous inquiry form submission |
+| P6 | POST | `payment_webhook` | D06-6.1 | Payment gateway callback (signature-verified) |
+| P7 | POST | `register_customer` | D01-7.8 | New customer registration |
+| P8 | GET | `verify_email` | D01-7.8 | Email verification link handler |
+
+#### Authenticated Customer Endpoints
+
+| # | Method | Endpoint | Domain | Description |
+|---|---|---|---|---|
+| C1 | GET | `get_kyc_status` | D03-4.1 | Current KYC verification status |
+| C2 | POST | `submit_kyc_documents` | D03-4.2 | Upload KYC documents |
+| C3 | GET | `get_required_document_types` | D03-4.4 | KYC document type list for region |
+| C4 | POST | `submit_booking_request` | D05-7.1 | Create a new booking |
+| C5 | POST | `cancel_booking_request` | D05-3.1 | Self-cancel a pending booking |
+| C6 | GET | `get_my_agreements` | D05-7.2 | List customer's agreements |
+| C7 | GET | `get_customer_invoices` | D06-7.1 | List customer's invoices |
+| C8 | GET | `get_invoice_payment_url` | D06-7.2 | Generate payment gateway URL |
+| C9 | GET | `get_deposit_status` | D06-7.3 | Deposit ledger for an agreement |
+| C10 | POST | `dispute_deposit_deduction` | D06-7.4 | Dispute a pending deduction |
+| C11 | GET | `get_customer_notifications` | D07-6.1 | Notification inbox |
+| C12 | POST | `mark_notification_read` | D07-6.2 | Mark notification as read |
+| C13 | POST | `register_fcm_token` | D07-6.3 | Register FCM push token |
+| C14 | POST | `deregister_fcm_token` | D07-6.3 | Deregister FCM push token |
+| C15 | GET | `get_active_rental_summary` | D04-7.5 | Home screen rental summary |
+| C16 | GET | `get_booking_steps` | D05-8.6 | Dynamic booking step list |
+| C17 | POST | `upload_payment_proof` | D06-7.5 | Bank transfer receipt upload |
+
+#### Guarantor Endpoints
+
+| # | Method | Endpoint | Domain | Description |
+|---|---|---|---|---|
+| G1 | GET | `get_guarantor_invoices` | D06-7.6 | View guaranteed tenant's overdue invoices |
+
+#### Staff Endpoints (Rental Manager / Accountant)
+
+| # | Method | Endpoint | Domain | Description |
+|---|---|---|---|---|
+| S1 | GET | `get_dashboard_metrics` | D08-7.1 | Dashboard summary data for Flutter |
+
+#### Scheduler Jobs (Background)
+
+| # | Schedule | Job | Domain | Description |
+|---|---|---|---|---|
+| J1 | Daily | `send_payment_reminders` | D07-3.1 | 3-day-before-due reminders |
+| J2 | Hourly | `run_overdue_escalation` | D07-4.1 | Escalation ladder |
+| J3 | Daily | `auto_apply_late_fees` | D06-3.1 | Apply late fees after grace |
+| J4 | Hourly | `auto_expire_draft_agreements` | D04-5.1 | Expire unreviewed bookings |
+| J5 | Daily | `auto_commit_deposit_deductions` | D06-4.3 | Commit undisputed deductions |
+| J6 | Monthly | `generate_monthly_report` | D08-4.1 | Email monthly metrics |
+| J7 | Monthly | `purge_old_webhook_logs` | D08-5.1 | Clean old webhook logs |
+
+**Acceptance Criteria**:
+- [ ] Every `@frappe.whitelist()` function in `rental_core` has a corresponding row in this registry
+- [ ] Registry is updated whenever a new endpoint is added in any domain
+- [ ] All public endpoints (P1–P8) are accessible without login
+- [ ] All customer endpoints (C1–C17) return 403 for unauthenticated requests
+- [ ] Guarantor endpoint (G1) restricts access to users with guarantor link only
+- [ ] Staff endpoint (S1) restricts access to Rental Manager / System Manager roles
+
+---
+
 ## 7. Web — Design System & Localisation
 
 ### 7.1 CSS Design System (`rental_web.css`)
@@ -655,6 +815,167 @@ These are **cross-cutting security rules** that every web developer must follow.
 - [ ] Location filter input `%OR 1=1--` is sanitized (wildcards stripped)
 
 ---
+
+### 7.6 Error, Empty & Loading State Patterns
+
+> **Requires**: 7.1 (CSS design system must exist)
+
+The Flutter plan defines reusable `error_view`, `loading_overlay`, and `offline_banner` widgets (8.3), but the web portal has **no equivalent patterns**. Without shared patterns, each domain will independently invent its own "empty catalog" or "payment failed" page, leading to visual inconsistency and duplicated markup. This subtask defines the HTML/CSS patterns that every web portal page must use.
+
+Three patterns are needed:
+
+**Error State** — shown when an API call fails or a page can't load its data. Includes an icon (⚠️), a translated error message, and a "Try Again" button that reloads the current page. Used on: catalog (API failure), My Rentals (permission error), payment page (gateway timeout).
+
+**Empty State** — shown when a query returns zero results. Includes an icon (📭), a translated message ("No results found" / "You have no active rentals"), and an optional CTA ("Browse Rentals"). Used on: catalog (no matching assets), My Invoices (no invoices yet), notifications (no notifications).
+
+**Loading State** — shown while data is being fetched. A centered spinner with a pulsing animation using the design system's `--rental-primary` color. Applied as an overlay on the content area, not the full page (so the header/nav remain visible).
+
+```css
+.rental-error-state, .rental-empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 3rem 1rem; text-align: center; color: var(--rental-muted);
+}
+.rental-error-state .retry-btn { margin-top: 1rem; }
+.rental-loading { display: flex; justify-content: center; padding: 3rem; }
+.rental-loading .spinner {
+  width: 40px; height: 40px; border: 3px solid var(--rental-border);
+  border-top-color: var(--rental-primary); border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+```
+
+**Acceptance Criteria**:
+- [ ] `.rental-error-state` pattern defined in the design system CSS
+- [ ] `.rental-empty-state` pattern defined in the design system CSS
+- [ ] `.rental-loading` spinner pattern defined in the design system CSS
+- [ ] All messages within state patterns are wrapped in `_()` for translation
+- [ ] At least one Jinja2 include template exists for each pattern (`templates/includes/error_state.html`, `empty_state.html`, `loading_state.html`)
+- [ ] Error state includes a "Try Again" button
+- [ ] Empty state supports an optional CTA button (passed as template parameter)
+
+---
+
+### 7.7 Accessibility Requirements (Web)
+
+> **Requires**: 7.1 (CSS design system), 7.3 (all portal page stubs)
+
+This is a **cross-cutting constraint** that applies to every web portal page, similar to the security requirements in 7.5. The platform targets multi-region deployment including the EU (where WCAG 2.1 AA compliance is increasingly expected) and government-adjacent clients in the Gulf (who may have accessibility mandates). These rules ensure the portal is usable by people with visual, motor, or cognitive disabilities.
+
+The requirements cover four areas:
+
+**Keyboard Navigation** — Every interactive element (buttons, links, form inputs, calendar dates, filter toggles) must be reachable via Tab key and activatable via Enter/Space. Focus order must follow the visual reading order (LTR or RTL depending on locale). The booking form's 5-step wizard must be navigable without a mouse.
+
+**ARIA Labels** — All icon-only buttons (e.g., the notification bell, calendar navigation arrows, photo carousel arrows) must have `aria-label` attributes describing their function. Form inputs must have associated `<label>` elements or `aria-label` (not just placeholder text). Status badges must use `role="status"` and `aria-live="polite"`.
+
+**Color Contrast** — The design system's color palette (7.1) must meet WCAG 2.1 AA contrast ratios: at least 4.5:1 for normal text and 3:1 for large text. The current `--rental-muted: #64748B` on `--rental-bg: #F8FAFC` must be verified (it's borderline at ~4.6:1).
+
+**Screen Reader Support** — The portal header must use `<nav aria-label="Main navigation">`. Page content areas must use `<main>`. Form validation errors must be announced via `aria-live="assertive"`. The availability calendar must announce selected dates.
+
+**Acceptance Criteria**:
+- [ ] All interactive elements are reachable via Tab key
+- [ ] Focus order follows visual reading order (LTR and RTL)
+- [ ] All icon-only buttons have descriptive `aria-label`
+- [ ] All form inputs have associated `<label>` elements
+- [ ] Color contrast meets WCAG 2.1 AA (4.5:1 for text, 3:1 for large text)
+- [ ] Portal header uses `<nav aria-label="Main navigation">`
+- [ ] Validation errors are announced via `aria-live="assertive"`
+- [ ] Booking form wizard is navigable via keyboard only
+
+---
+
+### 7.8 Registration Page (`www/rental-signup.html`)
+
+> **Requires**: 7.3 (stub file exists), 7.1 (design system), 6.3 (rate limiting on registration endpoint)
+
+The platform assumes customers exist before they can complete KYC (D03) and book assets (D05), but **no domain defines how a customer account is created**. The `rental-signup.html` stub exists in the file structure (7.3) but has no implementation. This subtask builds the actual registration form and its server-side handler.
+
+The registration form collects the minimum needed to create a Frappe user + ERPNext Customer record: `full_name`, `email`, `phone`, and `password`. No KYC documents are collected at this stage — that's handled separately in D03 after registration. This separation is intentional: casual browsers can create an account and explore the portal (My Rentals, invoices, etc.) before committing to the KYC process.
+
+The server-side API creates a Frappe User with role `Customer`, creates a linked ERPNext Customer record, sends a **verification email** with a confirmation link, and returns a success response. The account is **inactive** until the email link is clicked — this prevents bot registrations from cluttering the customer database.
+
+After successful email verification, the user is redirected to `/my-kyc` with a flash message: "Account verified! Complete your identity verification to start booking." This is the bridge to D03.
+
+```python
+@frappe.whitelist(allow_guest=True)
+def register_customer(full_name, email, phone, password):
+    rate_limit("register_customer", max_requests=5, window_seconds=3600, scope="ip")
+    if frappe.db.exists("User", email):
+        frappe.throw(_("An account with this email already exists"))
+    user = frappe.get_doc({
+        "doctype": "User", "email": email, "first_name": full_name,
+        "phone": phone, "new_password": password,
+        "roles": [{"role": "Customer"}], "enabled": 0,
+    })
+    user.insert(ignore_permissions=True)
+    customer = frappe.get_doc({
+        "doctype": "Customer", "customer_name": full_name,
+        "customer_type": "Individual", "email_id": email,
+    })
+    customer.insert(ignore_permissions=True)
+    send_verification_email(user)
+    return {"status": "ok", "message": _("Please check your email to verify your account")}
+```
+
+The web form includes:
+- Full name (required, min 2 characters)
+- Email (required, email format validation)
+- Phone (required, used for SMS notifications later)
+- Password (required, min 8 characters, strength indicator)
+- "Already have an account? Log in" link
+
+**Acceptance Criteria**:
+- [ ] Registration form renders at `/rental-signup`
+- [ ] Successful submission creates a Frappe User with role `Customer` and `enabled=0`
+- [ ] Successful submission creates a linked ERPNext Customer record
+- [ ] Verification email is sent with a confirmation link
+- [ ] Clicking the confirmation link sets `enabled=1` on the User
+- [ ] After verification, user is redirected to `/my-kyc`
+- [ ] Duplicate email returns HTTP 400 with "An account with this email already exists"
+- [ ] Rate-limited to 5 registrations per IP per hour (via 6.3)
+- [ ] Password must be at least 8 characters (client-side + server-side validation)
+- [ ] All form labels and messages are wrapped in `_()` for translation
+
+---
+
+### 7.9 Hijri Date Display
+
+> **Requires**: 3.1 (`date_display_format` field in Rental Configuration), 7.1 (design system)
+
+The platform targets Gulf region deployments (UAE, KSA, Bahrain, Oman, Kuwait, Qatar) where the **Hijri (Islamic) calendar** is used alongside the Gregorian calendar for official and business purposes. When the operator configures `date_display_format = Hijri` in Rental Configuration, all customer-facing dates in the web portal must display in **dual format**: the Hijri date as the primary display with the Gregorian date in parentheses (e.g., "15 Dhul Hijjah 1447 (12 Jun 2026)").
+
+This does NOT change how dates are stored internally — all database fields remain Gregorian ISO format. The conversion happens only at the **display layer** in Jinja2 templates.
+
+The conversion uses the `hijri-converter` Python library (which must be added to `pyproject.toml` dependencies). A custom Jinja2 filter `|hijri` is registered in `hooks.py` under `jinja.filters` to make it available in all templates.
+
+```python
+from hijri_converter import Gregorian
+
+def hijri_filter(date_value):
+    config = frappe.get_single("Rental Configuration")
+    if config.date_display_format != "Hijri":
+        return frappe.format_date(date_value)
+    hijri = Gregorian(date_value.year, date_value.month, date_value.day).to_hijri()
+    return f"{hijri.day} {hijri.month_name()} {hijri.year} ({frappe.format_date(date_value)})"
+```
+
+For the Flutter app, the equivalent conversion uses the `hijri` Dart package (added to `pubspec.yaml`). A `DateFormatter` utility in `core/formatting/date_formatter.dart` checks `AppConfig.dateFormat` and returns the appropriate string.
+
+**Acceptance Criteria**:
+- [ ] `hijri-converter` added to `pyproject.toml` dependencies
+- [ ] Custom Jinja2 filter `|hijri` registered in `hooks.py`
+- [ ] When `date_display_format = Hijri`: dates display as "15 Dhul Hijjah 1447 (12 Jun 2026)"
+- [ ] When `date_display_format = Gregorian`: dates display in the standard Frappe format
+- [ ] All Jinja2 templates that display dates use `{{ date_value | hijri }}` instead of raw `{{ date_value }}`
+- [ ] Flutter: `hijri` package added to `pubspec.yaml`
+- [ ] Flutter: `DateFormatter.format(date)` returns dual format when Hijri is configured
+- [ ] Date storage remains Gregorian ISO in all database fields (no conversion at storage layer)
+
+---
+
+> ⚙️ **FLUTTER FOUNDATION** — The following section (§8) covers the Dart/Flutter project scaffold.
+> This section can be assigned to a Flutter-specialist developer independently of §2-§7 (Frappe backend).
+> Future refactoring may split this into a separate `D01-F` sub-domain document.
 
 ## 8. Flutter — Project Setup & Foundation
 
@@ -1022,6 +1343,30 @@ The app must remain **usable when offline** for read-heavy screens. The strategy
 - [ ] Catalog data persists when app is backgrounded and re-opened (no re-fetch until pull-to-refresh)
 - [ ] Pull-to-refresh on asset detail clears cached data and re-fetches
 - [ ] Invoice screen always fetches fresh data (no stale reads)
+
+---
+
+### 8.12 Registration Screen (Flutter)
+
+> **Requires**: 7.8 (registration API must exist), 8.6 (FrappeClient), 8.8 (AuthNotifier)
+
+The Flutter counterpart to the web registration page (7.8). The app's login screen includes a "Don't have an account? Sign up" link that navigates to the registration screen. The registration form mirrors the web form: full name, email, phone, password, and a confirm password field.
+
+On successful submission, the screen shows a **success overlay**: "Check your email to verify your account" with an illustration and a "Go to Login" button. The user must verify via email before logging in — this is the same flow as the web, ensuring consistency regardless of which platform the customer uses to register.
+
+The registration screen is an **unauthenticated route** — it's accessible without login (obviously, since the user doesn't have an account yet). It's also excluded from the GoRouter guard list (8.9).
+
+Form validation is done **inline** as the user types: email format check (shows "Invalid email" under the field), password strength indicator (weak/medium/strong with color coding), and confirm password match check. The submit button is disabled until all validations pass.
+
+**Acceptance Criteria**:
+- [ ] Registration screen accessible from the login screen via "Sign up" link
+- [ ] Form includes: full name, email, phone, password, confirm password
+- [ ] Inline validation: email format, password min 8 chars, confirm password match
+- [ ] Successful registration shows success overlay with "Go to Login" button
+- [ ] Registration calls the same `register_customer` API endpoint (7.8)
+- [ ] Rate-limited registration returns a user-friendly error via `ApiError` model (8.10)
+- [ ] Duplicate email error displays "An account with this email already exists"
+- [ ] Registration screen is excluded from GoRouter auth guard (no redirect to login)
 
 ---
 

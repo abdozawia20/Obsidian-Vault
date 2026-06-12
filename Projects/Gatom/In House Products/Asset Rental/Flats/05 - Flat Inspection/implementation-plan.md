@@ -357,7 +357,76 @@ Security constraints that apply across ALL layers:
 
 ---
 
-## 8. Domain-Level Acceptance Criteria
+## 8. Cross-Cutting Concerns
+
+### 8.1 Logging
+
+| Location | Log Level | What to Log |
+|---|---|---|
+| `on_submit()` — entry inspection | `INFO` | Inspection name, asset, agreement, checklist item count, appliances updated |
+| `on_submit()` — exit inspection | `INFO` | Inspection name, asset, damage item count, total deduction amount |
+| `on_submit()` — exit with no damage | `INFO` | Inspection name, asset: "Exit inspection — no damage items" |
+| `on_submit()` — deposit deduction created | `INFO` | Deduction reason (room + item), amount, agreement |
+| `on_submit()` — no Deposit Ledger found | `ERROR` | Agreement name: "Deposit Ledger missing — deductions cannot be created" |
+| `validate()` — damage evidence rejected | `WARNING` | Item name, room, specific failure (missing photo / short justification / zero cost) |
+| `check_flat_annual_inspection_due` | `INFO` | Count of reminders sent, agreements overdue |
+| `_notify_pm()` — notification sent | `INFO` | Agreement, manager, message summary |
+| `_notify_pm()` — duplicate suppressed | `DEBUG` | Agreement, manager: "Existing ToDo found this week — skipped" |
+
+**Acceptance Criteria**:
+- [ ] All inspection submissions log the inspection type, outcome, and key metrics
+- [ ] Deposit deduction creation logs each deduction with reason and amount
+- [ ] Missing Deposit Ledger logs at `ERROR` level (this is a data integrity issue)
+- [ ] Structured logging uses `frappe.logger("rental_flats.inspection")`
+- [ ] No access codes or floor plan URLs appear in logs
+
+---
+
+### 8.2 Caching
+
+> [!NOTE]
+> Inspection data is **write-heavy and time-sensitive** — inspections are infrequent but when they happen, data must be fresh. No caching is applied to inspection creation, submission, or deduction workflows. The annual inspection reminder scheduler queries live data.
+
+The only cacheable element is the default checklist template (2.2), which is static configuration:
+
+| Data | Cache Key Pattern | TTL | Invalidation Trigger |
+|---|---|---|---|
+| Default checklist template | `inspection_template:{bedrooms}` | 24 hours | Manual clear after template changes |
+
+**Acceptance Criteria**:
+- [ ] Default checklist template can be cached to avoid rebuilding on each new inspection
+- [ ] Inspection submission and deduction workflows always use live data (no stale cache)
+
+---
+
+### 8.3 Rate Limiting
+
+This domain has **no public-facing API endpoints**. Inspections are created and submitted via Frappe Desk by Property Managers. The deduction display extends existing portal/app screens (covered by Base D05/D06 rate limiting). No additional rate limits needed.
+
+---
+
+### 8.4 Security Validation
+
+| Check | Location | Rule |
+|---|---|---|
+| Access code protection | ALL layers | `custom_access_code` never appears in inspection reports, deduction details, or any customer-facing surface |
+| Damage evidence requirements | `validate()` | `is_damage = 1` requires: photo, justification (min 10 chars), repair cost > 0 |
+| Deduction integrity | `on_submit()` — exit | Deductions only created for submitted inspections (`docstatus = 1`); cannot be modified after |
+| Entry vs exit isolation | `on_submit()` | Entry inspections NEVER create deductions (even if damage is noted) |
+| Dispute window enforcement | Web + Flutter deduction display | "Dispute" button only shown when deduction status is `Pending` AND within the dispute window (Base D06-4.2) |
+| Inspector identity | `on_submit()` | Inspector identity (`frappe.session.user`) recorded for audit trail |
+| Photo evidence integrity | Checklist validation | Photo attachments must be actual file uploads — URL references to external sites are rejected |
+
+**Acceptance Criteria**:
+- [ ] Access code is never included in any inspection-related output
+- [ ] Damage items without all three evidence requirements (photo, justification, cost) are blocked
+- [ ] Entry inspections never create deposit deductions
+- [ ] Deduction disputes are only possible within the configured dispute window
+- [ ] Inspector user is recorded and cannot be tampered with
+
+---
+
+## 9. Domain-Level Acceptance Criteria
 
 - [ ] Entry inspection: room-by-room checklist submitted, appliance conditions synced
 - [ ] Exit inspection: damage items → Pending deposit deductions with photo + justification
@@ -370,7 +439,7 @@ Security constraints that apply across ALL layers:
 
 ---
 
-## 9. Estimated Effort
+## 10. Estimated Effort
 
 | Layer | Effort |
 |---|---|
